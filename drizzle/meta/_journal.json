@@ -8,6 +8,20 @@
       "when": 1790232222521,
       "tag": "0000_greedy_dagger",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1790265525956,
+      "tag": "0001_right_scarlet_spider",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790265706737,
+      "tag": "0002_aberrant_gideon",
+      "breakpoints": true
     }
   ]
 }

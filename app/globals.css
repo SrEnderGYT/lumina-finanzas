@@ -64,8 +64,10 @@ html { background: var(--background); }
 body { margin: 0; background: var(--background); color: var(--foreground); font-family: var(--font-sans); }
 button, select, input { font: inherit; }
 button { cursor: pointer; }
+.field-label { display: grid; gap: .45rem; font-size: .75rem; font-weight: 700; color: #52655f; }
 .panel { border: 1px solid #dce4e1; border-radius: 24px; background: rgba(255,255,255,.93); box-shadow: 0 1px 2px rgba(20,48,39,.03); }
 .section-label { font-size: .72rem; font-weight: 750; letter-spacing: .105em; text-transform: uppercase; color: #7c8a85; }
 .table-label { font-size: .69rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #84908c; }
 ::selection { background: #c9ff4d; color: #102820; }
+@supports (padding: max(0px)) { .safe-bottom { padding-bottom: max(.75rem, env(safe-area-inset-bottom)); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }

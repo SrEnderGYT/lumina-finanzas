@@ -3,7 +3,7 @@ import { getDb } from "@/db";
 import { gmailAccounts, syncRuns, transactions } from "@/db/schema";
 import { parseWithAi } from "./ai-fallback";
 import { parseBankEmail, type EmailInput } from "./banks";
-import { categorize } from "./categorize";
+import { ensureCard, resolveCategory } from "./domain";
 import { decryptSecret, encryptSecret } from "./crypto";
 import { requireSecret } from "./runtime-env";
 
@@ -65,15 +65,33 @@ export async function syncGmail(userId: string) {
   const stats = { scanned: 0, created: 0, duplicates: 0, failures: 0 };
   try {
     const accessToken = await validAccessToken(userId);
-    const query = encodeURIComponent('newer_than:180d (compra OR consumo OR cargo OR "pago con tarjeta" OR transacción OR movimiento)');
-    let pageToken: string | undefined;
-    const messageIds: string[] = [];
-    for (let page = 0; page < 3; page++) {
-      const suffix = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "";
-      const result = await gmailFetch<{ messages?: Array<{ id: string }>; nextPageToken?: string }>(accessToken, `messages?q=${query}&maxResults=100${suffix}`);
-      messageIds.push(...(result.messages ?? []).map((item) => item.id));
-      pageToken = result.nextPageToken;
-      if (!pageToken) break;
+    const [account] = await db.select().from(gmailAccounts).where(eq(gmailAccounts.userId, userId)).limit(1);
+    const messageIds = new Set<string>();
+    if (account?.lastSyncAt && account.historyId) {
+      let pageToken: string | undefined;
+      try {
+        for (let page = 0; page < 10; page++) {
+          const suffix = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "";
+          const result = await gmailFetch<{ history?: Array<{ messagesAdded?: Array<{ message?: { id?: string } }> }>; nextPageToken?: string }>(accessToken, `history?startHistoryId=${encodeURIComponent(account.historyId)}&historyTypes=messageAdded&maxResults=100${suffix}`);
+          for (const event of result.history ?? []) for (const added of event.messagesAdded ?? []) if (added.message?.id) messageIds.add(added.message.id);
+          pageToken = result.nextPageToken;
+          if (!pageToken) break;
+        }
+      } catch {
+        const after = Math.max(0, account.lastSyncAt - 300);
+        const result = await gmailFetch<{ messages?: Array<{ id: string }> }>(accessToken, `messages?q=${encodeURIComponent(`after:${after} (compra OR consumo OR cargo OR transacción OR movimiento)`)}&maxResults=250`);
+        for (const item of result.messages ?? []) messageIds.add(item.id);
+      }
+    } else {
+      let pageToken: string | undefined;
+      const query = encodeURIComponent('newer_than:365d (compra OR consumo OR cargo OR "pago con tarjeta" OR transacción OR movimiento)');
+      for (let page = 0; page < 5; page++) {
+        const suffix = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "";
+        const result = await gmailFetch<{ messages?: Array<{ id: string }>; nextPageToken?: string }>(accessToken, `messages?q=${query}&maxResults=100${suffix}`);
+        for (const item of result.messages ?? []) messageIds.add(item.id);
+        pageToken = result.nextPageToken;
+        if (!pageToken) break;
+      }
     }
     for (const messageId of messageIds) {
       stats.scanned++;
@@ -83,16 +101,20 @@ export async function syncGmail(userId: string) {
       const email: EmailInput = { id: message.id, threadId: message.threadId, from: header(message, "From"), subject: header(message, "Subject"), body: partText(message.payload), internalDate: Number(message.internalDate ?? Date.now()) };
       const parsed = parseBankEmail(email) ?? await parseWithAi(email);
       if (!parsed) { stats.failures++; continue; }
+      const classification = await resolveCategory(userId, parsed.merchant, parsed.description);
+      const card = await ensureCard(userId, parsed.bank, parsed.cardLast4, parsed.cardType, /visa/i.test(email.body) ? "VISA" : /mastercard/i.test(email.body) ? "Mastercard" : undefined);
       const inserted = await db.insert(transactions).values({
         id: crypto.randomUUID(), userId, gmailMessageId: message.id, gmailThreadId: message.threadId, gmailInternalDate: email.internalDate,
         bank: parsed.bank, merchant: parsed.merchant, operationDate: parsed.operationDate, amountCents: parsed.amountCents, currency: parsed.currency,
-        cardType: parsed.cardType, cardLast4: parsed.cardLast4, operationType: parsed.operationType, category: categorize(parsed.merchant, parsed.description),
-        categorySource: "rule", description: parsed.description, confidence: parsed.confidence, rawSubject: email.subject.slice(0, 500), parserId: parsed.parserId,
+        cardType: parsed.cardType, cardLast4: parsed.cardLast4, cardId: card?.id, operationType: parsed.operationType, category: classification.name,
+        categoryId: classification.categoryId, subcategoryId: classification.subcategoryId, categorySource: classification.source, description: parsed.description,
+        confidence: parsed.confidence, rawSubject: email.subject.slice(0, 500), parserId: parsed.parserId, source: "gmail",
       }).onConflictDoNothing().returning({ id: transactions.id });
       if (inserted.length) stats.created++; else stats.duplicates++;
     }
     const now = Math.floor(Date.now() / 1000);
-    await db.update(gmailAccounts).set({ lastSyncAt: now, updatedAt: now }).where(eq(gmailAccounts.userId, userId));
+    const profile = await gmailFetch<{ historyId?: string }>(accessToken, "profile");
+    await db.update(gmailAccounts).set({ lastSyncAt: now, historyId: profile.historyId ?? account?.historyId, updatedAt: now }).where(eq(gmailAccounts.userId, userId));
     await db.update(syncRuns).set({ status: "completed", messagesScanned: stats.scanned, transactionsCreated: stats.created, duplicatesSkipped: stats.duplicates, parseFailures: stats.failures, finishedAt: now }).where(eq(syncRuns.id, runId));
     return stats;
   } catch (error) {

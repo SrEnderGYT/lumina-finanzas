@@ -4,6 +4,7 @@ import { gmailAccounts, users } from "@/db/schema";
 import { encryptSecret } from "@/lib/crypto";
 import { requireSecret } from "@/lib/runtime-env";
 import { createSessionToken, sessionCookie } from "@/lib/session";
+import { ensureUserDefaults } from "@/lib/domain";
 
 function readCookie(request: Request, name: string) { return (request.headers.get("cookie") ?? "").split(";").map((x) => x.trim()).find((x) => x.startsWith(`${name}=`))?.slice(name.length + 1); }
 
@@ -27,8 +28,10 @@ export async function GET(request: Request) {
     await db.insert(users).values({ id: userId, email: profile.emailAddress, displayName: profile.emailAddress.split("@")[0] }).onConflictDoUpdate({ target: users.email, set: { updatedAt: now } });
     const secret = requireSecret("APP_ENCRYPTION_KEY");
     const [previous] = await db.select().from(gmailAccounts).where(eq(gmailAccounts.userId, userId)).limit(1);
-    await db.insert(gmailAccounts).values({ userId, email: profile.emailAddress, accessTokenEncrypted: await encryptSecret(token.access_token, secret), refreshTokenEncrypted: token.refresh_token ? await encryptSecret(token.refresh_token, secret) : previous?.refreshTokenEncrypted, tokenExpiresAt: now + token.expires_in, scope: token.scope, historyId: profile.historyId, updatedAt: now }).onConflictDoUpdate({ target: gmailAccounts.userId, set: { email: profile.emailAddress, accessTokenEncrypted: await encryptSecret(token.access_token, secret), refreshTokenEncrypted: token.refresh_token ? await encryptSecret(token.refresh_token, secret) : previous?.refreshTokenEncrypted, tokenExpiresAt: now + token.expires_in, scope: token.scope, historyId: profile.historyId, updatedAt: now } });
-    const response = Response.redirect(`${url.origin}/?auth=connected`, 302);
+    const historyId = previous?.lastSyncAt ? previous.historyId : profile.historyId;
+    await db.insert(gmailAccounts).values({ userId, email: profile.emailAddress, accessTokenEncrypted: await encryptSecret(token.access_token, secret), refreshTokenEncrypted: token.refresh_token ? await encryptSecret(token.refresh_token, secret) : previous?.refreshTokenEncrypted, tokenExpiresAt: now + token.expires_in, scope: token.scope, historyId, updatedAt: now }).onConflictDoUpdate({ target: gmailAccounts.userId, set: { email: profile.emailAddress, accessTokenEncrypted: await encryptSecret(token.access_token, secret), refreshTokenEncrypted: token.refresh_token ? await encryptSecret(token.refresh_token, secret) : previous?.refreshTokenEncrypted, tokenExpiresAt: now + token.expires_in, scope: token.scope, historyId, updatedAt: now } });
+    await ensureUserDefaults(userId);
+    const response = Response.redirect(`${url.origin}/app?auth=connected`, 302);
     response.headers.append("set-cookie", sessionCookie(await createSessionToken(userId, profile.emailAddress), request));
     response.headers.append("set-cookie", "lumina_oauth_state=; Path=/api/auth/google/callback; HttpOnly; SameSite=Lax; Max-Age=0");
     return response;

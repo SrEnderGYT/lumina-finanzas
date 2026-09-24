@@ -6,6 +6,8 @@ const cases = [
   { from: "noreply@interbank.pe", subject: "Realizaste una compra", body: "Realizaste una compra en TOTTUS por S/ 142.50 con tu tarjeta terminada en 4821 el 23/09/2026.", bank: "Interbank", amount: 14250, last4: "4821" },
   { from: "bbva@bbva.pe", subject: "Consumo con tarjeta", body: "Consumo en NETFLIX por USD 12.99 con tarjeta ****9934 el 22/09/2026.", bank: "BBVA", amount: 1299, last4: "9934" },
   { from: "alertas@scotiabank.com.pe", subject: "Alerta de compra", body: "Compra en INKAFARMA por S/ 67,40 con tu tarjeta últimos 4 3344 el 21/09/2026.", bank: "Scotiabank", amount: 6740, last4: "3344" },
+  { from: "alertas@bancofalabella.com.pe", subject: "Compra con CMR", body: "Compra en SODIMAC por S/ 250.00 con tu tarjeta terminada en 8877 el 20/09/2026.", bank: "Banco Falabella", amount: 25000, last4: "8877" },
+  { from: "alertas@bancoripley.com.pe", subject: "Consumo aprobado", body: "Consumo en RIPLEY SAN ISIDRO por S/ 199.90 con tarjeta ****5544 el 19/09/2026.", bank: "Banco Ripley", amount: 19990, last4: "5544" },
 ];
 
 for (const [index, item] of cases.entries()) {
