@@ -8,7 +8,7 @@ export async function GET(request: Request) {
     const response = Response.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`, 302);
     response.headers.append("set-cookie", `lumina_oauth_state=${state}; Path=/api/auth/google/callback; HttpOnly; SameSite=Lax; Max-Age=600${origin.startsWith("https:") ? "; Secure" : ""}`);
     return response;
-  } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "OAuth no está configurado." }, { status: 503 });
+  } catch {
+    return Response.redirect(`${new URL(request.url).origin}/?auth=setup`, 302);
   }
 }
