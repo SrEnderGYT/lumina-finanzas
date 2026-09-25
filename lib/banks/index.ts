@@ -5,10 +5,11 @@ import { interbankParser } from "./interbank";
 import { falabellaParser } from "./falabella";
 import { ripleyParser } from "./ripley";
 import { scotiabankParser } from "./scotiabank";
+import { yapeParser } from "./yape";
 import type { BankParser, EmailInput, ParsedTransaction } from "./types";
 import { validateParsed } from "./validate";
 
-export const bankParsers: BankParser[] = [bcpParser, interbankParser, bbvaParser, scotiabankParser, falabellaParser, ripleyParser, genericParser];
+export const bankParsers: BankParser[] = [bcpParser, interbankParser, bbvaParser, scotiabankParser, falabellaParser, ripleyParser, yapeParser, genericParser];
 
 export function parseBankEmail(email: EmailInput): ParsedTransaction | null {
   // Primero los parsers cuyo remitente coincide, para que un correo de un banco que menciona a otro no se asigne mal.

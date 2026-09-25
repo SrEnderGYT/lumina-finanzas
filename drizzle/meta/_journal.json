@@ -29,6 +29,13 @@
       "when": 1790317720189,
       "tag": "0003_naive_chimera",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790377324401,
+      "tag": "0004_many_spyke",
+      "breakpoints": true
     }
   ]
 }

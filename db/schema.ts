@@ -71,7 +71,10 @@ export const transactions = sqliteTable("transactions", {
   cardLast4: text("card_last4"), operationType: text("operation_type").notNull().default("expense"), category: text("category").notNull().default("Otros"),
   categorySource: text("category_source").notNull().default("rule"), description: text("description"), confidence: real("confidence").notNull().default(0),
   rawSubject: text("raw_subject"), parserId: text("parser_id").notNull(), createdAt: integer("created_at").notNull().default(sql`(unixepoch())`), updatedAt: integer("updated_at").notNull().default(sql`(unixepoch())`),
-  source: text("source").notNull().default("gmail"), cardId: text("card_id"), categoryId: text("category_id"), subcategoryId: text("subcategory_id"), deletedAt: integer("deleted_at"),
+  source: text("source").notNull().default("gmail"),
+  // Auditoría de la decisión: qué tipo de correo era, con qué confianza y por qué se aceptó.
+  classification: text("classification"), confidenceLevel: text("confidence_level"), decisionReason: text("decision_reason"),
+  cardId: text("card_id"), categoryId: text("category_id"), subcategoryId: text("subcategory_id"), deletedAt: integer("deleted_at"),
 }, (table) => [
   uniqueIndex("idx_transactions_user_message").on(table.userId, table.gmailMessageId),
   index("idx_transactions_user_date").on(table.userId, table.operationDate), index("idx_transactions_user_bank").on(table.userId, table.bank),
@@ -96,5 +99,7 @@ export const processedMessages = sqliteTable("processed_messages", {
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   gmailMessageId: text("gmail_message_id").notNull(),
   status: text("status").notNull().default("ignored"),
+  // Por qué se descartó (publicidad, estado de cuenta, evidencia insuficiente…), para auditar y mejorar las reglas.
+  classification: text("classification"), confidenceLevel: text("confidence_level"), reason: text("reason"), subject: text("subject"),
   createdAt: integer("created_at").notNull().default(sql`(unixepoch())`),
 }, (table) => [primaryKey({ columns: [table.userId, table.gmailMessageId] })]);

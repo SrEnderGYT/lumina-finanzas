@@ -1,4 +1,8 @@
-export type EmailInput = { id: string; threadId?: string; from: string; subject: string; body: string; internalDate: number };
+export type EmailInput = {
+  id: string; threadId?: string; from: string; subject: string; body: string; internalDate: number;
+  /** Etiquetas de Gmail (p. ej. CATEGORY_PROMOTIONS) y presencia de List-Unsubscribe: señales de correo masivo. */
+  labels?: string[]; listUnsubscribe?: boolean;
+};
 export type OperationType = "expense" | "card_charge" | "subscription" | "refund" | "transfer" | "income" | "statement";
 export type ParsedTransaction = {
   bank: string; merchant: string; operationDate: number; amountCents: number; currency: "PEN" | "USD";

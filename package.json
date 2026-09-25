@@ -16,7 +16,9 @@
     "typecheck": "tsc --noEmit",
     "test:parsers": "tsx scripts/test-parsers.ts",
     "test:validation": "tsx scripts/test-validation.ts",
-    "test": "npm run test:parsers && npm run test:validation"
+    "test:classify": "tsx scripts/test-classify.ts",
+    "test:recurrence": "tsx scripts/test-recurrence.ts",
+    "test": "npm run test:parsers && npm run test:validation && npm run test:classify && npm run test:recurrence"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

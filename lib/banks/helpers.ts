@@ -1,4 +1,7 @@
+import { limaTimestamp } from "../time";
 import type { EmailInput, OperationType, ParsedTransaction } from "./types";
+
+export const UNKNOWN_MERCHANT = "Comercio no identificado";
 
 export const normalize = (value: string) => value.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 
@@ -32,7 +35,7 @@ export function extractAmount(text: string): { amountCents: number; currency: "P
 }
 
 export function extractLast4(text: string): string | undefined {
-  return text.match(/(?:terminada?|final|últimos?\s*4|\*{2,}|x{2,}|•{2,})\s*(?:en\s*)?(\d{4})/i)?.[1] ?? text.match(/tarjeta[^\d]{0,20}(\d{4})(?!\d)/i)?.[1];
+  return text.match(/(?:terminada?|final|últimos?\s*4|\*+|x{2,}|•{2,})\s*(?:en\s*)?(\d{4})/i)?.[1] ?? text.match(/tarjeta[^\d]{0,20}(\d{4})(?!\d)/i)?.[1];
 }
 
 export function extractDate(text: string, fallback: number): number {
@@ -42,14 +45,18 @@ export function extractDate(text: string, fallback: number): number {
   const year = Number(direct[3]) < 100 ? 2000 + Number(direct[3]) : Number(direct[3]);
   const hour = Number(direct[4] ?? 12), minute = Number(direct[5] ?? 0);
   if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) return fallback;
-  const result = new Date(year, month - 1, day, hour, minute);
   // Rechaza desbordes como 31/02 que JS convertiría silenciosamente en marzo.
-  if (result.getMonth() !== month - 1 || result.getDate() !== day) return fallback;
-  return result.getTime();
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) return fallback;
+  // Los correos traen la hora de Lima; se convierte a un instante UTC para que el mes no dependa del servidor.
+  return limaTimestamp(year, month - 1, day, hour, minute);
 }
 
 export function operationType(text: string): OperationType {
   if (/devoluci[oó]n|reembolso|refund|revers[oa]/i.test(text)) return "refund";
+  if (/recibiste|te (?:yape|pline|transfiri)[oó]|te (?:depositaron|abonaron)/i.test(text)) return "income";
+  // Pagar la tarjeta es mover dinero entre tus productos: sumarlo como gasto duplicaría los consumos ya registrados.
+  if (/pago de (?:tu |la )?tarjeta|pago de (?:tu )?l[ií]nea/i.test(text)) return "transfer";
   if (/transferencia|yape|plin|enviaste|transferiste/i.test(text)) return "transfer";
   if (/abono|dep[oó]sito|recibiste|ingreso/i.test(text)) return "income";
   if (/estado de cuenta|resumen mensual|statement/i.test(text)) return "statement";
@@ -57,12 +64,28 @@ export function operationType(text: string): OperationType {
   return /cr[eé]dito/i.test(text) ? "card_charge" : "expense";
 }
 
+// Comercio/contraparte cuando el parser del banco no lo encuentra: "pagaste … a X", "retiro … en cajero X", "suscripción a X".
+const FALLBACK_MERCHANT_PATTERNS: RegExp[] = [
+  /\b(?:pagaste|transferiste|transferencia|enviaste|yapeaste|plineaste|depositaste)\b(?:[^.]|\.\d){0,70}?\s+a\s+(?:nombre de\s+)?([^.,;|]{2,50}?)(?=\s+(?:con|desde|el|de tu|por|usando|mediante)\b|[.,;]|$)/i,
+  /\bretiro\b(?:[^.]|\.\d){0,40}?\ben\s+(cajero(?:(?!\bretiro\b)[^.,;]){0,40}?)(?=\s+(?:con|de tu|el)\b|[.,;]|$)/i,
+  /\bsuscripci[oó]n\s+a\s+([^.,;|]{2,40}?)(?=\s+(?:con|el|de tu|por)\b|[.,;]|$)/i,
+  /\bcompra\s+en\s+([^.,;|]{2,40}?)(?=\s+(?:con|el|de tu|por)\b|[.,;]|$)/i,
+];
+// Capturas que en realidad son montos, números o frases del encabezado, no un comercio.
+const merchantNoise = (value: string) => /\b(?:S\/|USD|US\$|PEN)\s*\d|^\d|\bconstancia\b|\boperaci[oó]n\b|^(?:de|un|una|tu|su)\s/i.test(value) || value.length < 2;
+
 export function parseCommon(email: EmailInput, bank: string, parserId: string, merchantPatterns: RegExp[], confidence = .88): ParsedTransaction | null {
   const text = normalize(`${email.subject} ${email.body}`);
   const amount = extractAmount(text);
   if (!amount) return null;
-  let merchant = "Comercio no identificado";
-  for (const pattern of merchantPatterns) { const match = text.match(pattern); if (match?.[1]) { merchant = normalize(match[1]).replace(/[.,;:]$/, ""); break; } }
+  let merchant = UNKNOWN_MERCHANT;
+  search: for (const pattern of [...merchantPatterns, ...FALLBACK_MERCHANT_PATTERNS]) {
+    // Se revisan todas las coincidencias: la primera puede caer en el asunto y ser ruido.
+    for (const match of text.matchAll(new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`))) {
+      const candidate = match[1] ? normalize(match[1]).replace(/[.,;:]$/, "") : "";
+      if (candidate && !merchantNoise(candidate)) { merchant = candidate; break search; }
+    }
+  }
   return { bank, merchant, operationDate: extractDate(text, email.internalDate), ...amount, cardLast4: extractLast4(text), cardType: /d[eé]bito/i.test(text) ? "Débito" : /cr[eé]dito|visa|mastercard/i.test(text) ? "Crédito" : undefined, operationType: operationType(text), description: email.subject, confidence, parserId };
 }
 

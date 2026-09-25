@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { gmailAccounts, processedMessages, syncRuns, transactions } from "@/db/schema";
 import { parseWithAi } from "./ai-fallback";
 import { parseBankEmail, validateParsed, type EmailInput } from "./banks";
+import { classifyEmail, decideConfidence, type Decision } from "./banks/classify";
 import { amountsInText, extractAmount, normalize } from "./banks/helpers";
 import { createClassifier, ensureCard } from "./domain";
 import { decryptSecret, encryptSecret } from "./crypto";
@@ -10,7 +11,7 @@ import { requireSecret } from "./runtime-env";
 
 type GmailHeader = { name: string; value: string };
 type GmailPart = { mimeType?: string; body?: { data?: string }; parts?: GmailPart[] };
-type GmailMessage = { id: string; threadId?: string; internalDate?: string; payload?: GmailPart & { headers?: GmailHeader[] } };
+type GmailMessage = { id: string; threadId?: string; internalDate?: string; labelIds?: string[]; payload?: GmailPart & { headers?: GmailHeader[] } };
 
 function decodeBody(value: string): string {
   const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
@@ -119,7 +120,7 @@ function aiAgrees(parsed: { amountCents: number; currency: string }, email: Emai
 export async function syncGmail(userId: string) {
   const db = getDb();
   const runId = await acquireRun(userId);
-  const stats = { scanned: 0, created: 0, duplicates: 0, failures: 0, retry: 0, remaining: 0, hasMore: false };
+  const stats = { scanned: 0, created: 0, duplicates: 0, failures: 0, promotions: 0, retry: 0, remaining: 0, hasMore: false };
   try {
     const accessToken = await validAccessToken(userId);
     const [account] = await db.select().from(gmailAccounts).where(eq(gmailAccounts.userId, userId)).limit(1);
@@ -206,24 +207,30 @@ export async function syncGmail(userId: string) {
     const cardCache = new Map<string, Awaited<ReturnType<typeof ensureCard>>>();
     for (const message of messages) {
       if (!message) continue;
-      const email: EmailInput = { id: message.id, threadId: message.threadId, from: header(message, "From"), subject: header(message, "Subject"), body: partText(message.payload), internalDate: Number(message.internalDate ?? Date.now()) };
+      const email: EmailInput = { id: message.id, threadId: message.threadId, from: header(message, "From"), subject: header(message, "Subject"), body: partText(message.payload), internalDate: Number(message.internalDate ?? Date.now()), labels: message.labelIds, listUnsubscribe: Boolean(header(message, "List-Unsubscribe")) };
+      // Flujo: clasificar el correo → extraer datos → decidir confianza → (solo si se acepta) registrar.
+      const kind = classifyEmail(email);
       let parsed = parseBankEmail(email);
+      let decision: Decision | null = null;
+      let fromAi = false;
       let definitive = true;
-      if (!parsed && aiCandidate(email)) {
+      if (kind.kind === "transaction" && !parsed && aiCandidate(email)) {
         const ai = await parseWithAi(email);
         if (ai.kind === "parsed") {
           const checked = validateParsed(ai.value, email);
-          if (checked && aiAgrees(checked, email)) parsed = checked;
+          if (checked && aiAgrees(checked, email)) { parsed = checked; fromAi = true; }
         } else if (ai.kind === "unavailable") {
           // Un fallo de infraestructura no es un veredicto sobre el correo: no se descarta.
-          // Con límite de tasa o caída se reintenta después; sin clave configurada simplemente no se procesa.
           definitive = false;
           if (ai.retryable) stats.retry++;
         }
       }
-      if (!parsed) {
+      if (parsed) decision = decideConfidence(parsed, email, kind, fromAi);
+      else decision = { accepted: false, kind: kind.kind, confidence: "low", reason: kind.kind === "transaction" ? "Rechazado: el correo parece una operación pero no se pudieron extraer los datos." : `Rechazado (${kind.kind}): ${kind.reasons.slice(0, 4).join("; ") || "sin señales de transacción"}` };
+      if (!decision.accepted || !parsed) {
         stats.failures++;
-        if (definitive) await db.insert(processedMessages).values({ userId, gmailMessageId: message.id, status: "ignored" }).onConflictDoNothing();
+        if (kind.kind === "promotion") stats.promotions++;
+        if (definitive) await db.insert(processedMessages).values({ userId, gmailMessageId: message.id, status: "ignored", classification: decision.kind, confidenceLevel: decision.confidence, reason: decision.reason.slice(0, 500), subject: email.subject.slice(0, 200) }).onConflictDoNothing();
         continue;
       }
       const classification = classify(parsed.merchant, parsed.description);
@@ -236,6 +243,7 @@ export async function syncGmail(userId: string) {
         cardType: parsed.cardType, cardLast4: parsed.cardLast4, cardId: card?.id, operationType: parsed.operationType, category: classification.name,
         categoryId: classification.categoryId, subcategoryId: classification.subcategoryId, categorySource: classification.source, description: parsed.description,
         confidence: parsed.confidence, rawSubject: email.subject.slice(0, 500), parserId: parsed.parserId, source: "gmail",
+        classification: decision.kind, confidenceLevel: decision.confidence, decisionReason: decision.reason.slice(0, 500),
       }).onConflictDoNothing().returning({ id: transactions.id });
       if (inserted.length) stats.created++; else stats.duplicates++;
     }
