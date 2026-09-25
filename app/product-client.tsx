@@ -88,7 +88,18 @@ export function ProductClient() {
   const sync = async () => {
     if (!online) { toast.error("No tienes conexión"); return; }
     setSyncing(true);
-    try { const result = await jsonRequest<{ created: number; duplicates: number; failures: number; remaining: number; hasMore: boolean }>("/api/sync", { method: "POST" }); await load(true); toast.success(result.created ? `${result.created} movimientos nuevos` : "Gmail ya está al día", { description: result.hasMore ? "Aún hay correos por revisar: vuelve a sincronizar." : result.failures ? `${result.failures} correos necesitaron revisión.` : "Sin duplicados." }); }
+    try {
+      // Cada ejecución procesa un lote acotado; se repite sola hasta terminar (máx. 40 rondas) para no obligar a pulsar varias veces.
+      let created = 0, discarded = 0, more = false;
+      for (let round = 0; round < 40; round++) {
+        const result = await jsonRequest<{ created: number; duplicates: number; failures: number; remaining: number; hasMore: boolean }>("/api/sync", { method: "POST" });
+        created += result.created; discarded += result.failures; more = result.hasMore;
+        if (round % 3 === 2 || !more) await load(true);
+        if (!more || (result.created === 0 && result.failures === 0)) break;
+      }
+      await load(true);
+      toast.success(created ? `${created} movimientos nuevos` : "Gmail ya está al día", { description: more ? "Aún quedan correos por revisar: vuelve a sincronizar." : discarded ? `${discarded} correos descartados (publicidad u otros sin operación real).` : "Sin duplicados." });
+    }
     catch (cause) { if ((cause as { code?: string }).code === "reconnect_required") setNeedsReconnect(true); toast.error("No pudimos sincronizar", { description: cause instanceof Error ? cause.message : "Inténtalo otra vez." }); }
     finally { setSyncing(false); }
   };
