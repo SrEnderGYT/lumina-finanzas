@@ -3,10 +3,11 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { cards, categories, subcategories, transactions } from "@/db/schema";
 import { requireSession } from "@/lib/session";
+import { amountSchema, operationDateSchema } from "@/lib/validation";
 
 const updateSchema = z.object({
-  merchant: z.string().trim().min(2).max(120).optional(), description: z.string().trim().max(300).nullable().optional(), amount: z.number().positive().max(100000000).optional(),
-  currency: z.enum(["PEN", "USD"]).optional(), operationDate: z.number().int().positive().optional(), operationType: z.enum(["expense", "card_charge", "subscription", "refund", "transfer", "income"]).optional(),
+  merchant: z.string().trim().min(2).max(120).optional(), description: z.string().trim().max(300).nullable().optional(), amount: amountSchema.optional(),
+  currency: z.enum(["PEN", "USD"]).optional(), operationDate: operationDateSchema.optional(), operationType: z.enum(["expense", "card_charge", "subscription", "refund", "transfer", "income"]).optional(),
   bank: z.string().trim().min(2).max(80).optional(), cardId: z.string().uuid().nullable().optional(), categoryId: z.string().uuid().optional(), subcategoryId: z.string().uuid().nullable().optional(),
 });
 
@@ -26,12 +27,16 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (value.categoryId && !category) return Response.json({ error: "Categoría no encontrada." }, { status: 404 });
     const card = value.cardId ? (await db.select().from(cards).where(and(eq(cards.id, value.cardId), eq(cards.userId, session.userId))).limit(1))[0] : undefined;
     if (value.cardId && !card) return Response.json({ error: "Tarjeta no encontrada." }, { status: 404 });
+    const [existing] = await db.select({ categoryId: transactions.categoryId, subcategoryId: transactions.subcategoryId }).from(transactions).where(and(eq(transactions.id, id), eq(transactions.userId, session.userId))).limit(1);
+    if (!existing) return Response.json({ error: "Movimiento no encontrado." }, { status: 404 });
+    // Al cambiar de categoría sin indicar subcategoría, la anterior deja de ser válida.
+    const clearSubcategory = value.subcategoryId === undefined && category !== undefined && category.id !== existing.categoryId;
     const [updated] = await db.update(transactions).set({
       ...(value.merchant !== undefined ? { merchant: value.merchant } : {}), ...(value.description !== undefined ? { description: value.description } : {}),
       ...(value.amount !== undefined ? { amountCents: Math.round(value.amount * 100) } : {}), ...(value.currency ? { currency: value.currency } : {}),
       ...(value.operationDate ? { operationDate: value.operationDate } : {}), ...(value.operationType ? { operationType: value.operationType } : {}),
       ...(value.bank ? { bank: value.bank } : {}), ...(value.cardId !== undefined ? { cardId: value.cardId, cardLast4: card?.last4 ?? null, cardType: card?.cardType ?? null, bank: card?.bank ?? value.bank } : {}),
-      ...(category ? { categoryId: category.id, category: category.name, categorySource: "manual" } : {}), ...(value.subcategoryId !== undefined ? { subcategoryId: subcategory?.id ?? null } : {}),
+      ...(category ? { categoryId: category.id, category: category.name, categorySource: "manual" } : {}), ...(value.subcategoryId !== undefined ? { subcategoryId: subcategory?.id ?? null } : clearSubcategory ? { subcategoryId: null } : {}),
       updatedAt: Math.floor(Date.now() / 1000),
     }).where(and(eq(transactions.id, id), eq(transactions.userId, session.userId))).returning();
     if (!updated) return Response.json({ error: "Movimiento no encontrado." }, { status: 404 });

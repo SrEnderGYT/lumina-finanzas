@@ -7,7 +7,8 @@ export const SESSION_COOKIE = "lumina_session";
 function cookieValue(request: Request, name: string): string | null {
   const raw = request.headers.get("cookie") ?? "";
   const match = raw.split(";").map((item) => item.trim()).find((item) => item.startsWith(`${name}=`));
-  return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
+  if (!match) return null;
+  try { return decodeURIComponent(match.slice(name.length + 1)); } catch { return null; }
 }
 
 export async function createSessionToken(userId: string, email: string): Promise<string> {
@@ -25,8 +26,10 @@ export async function getSession(request: Request): Promise<AppSession | null> {
   let mismatch = 0;
   for (let index = 0; index < signature.length; index++) mismatch |= signature.charCodeAt(index) ^ expected.charCodeAt(index);
   if (mismatch !== 0) return null;
-  const session = JSON.parse(decodeBase64Url(payload)) as AppSession;
-  return session.exp > Math.floor(Date.now() / 1000) ? session : null;
+  try {
+    const session = JSON.parse(decodeBase64Url(payload)) as AppSession;
+    return typeof session.userId === "string" && typeof session.exp === "number" && session.exp > Math.floor(Date.now() / 1000) ? session : null;
+  } catch { return null; }
 }
 
 export function sessionCookie(token: string, request: Request): string {

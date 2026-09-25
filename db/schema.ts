@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(), email: text("email").notNull(), displayName: text("display_name"),
@@ -85,4 +85,16 @@ export const syncRuns = sqliteTable("sync_runs", {
   messagesScanned: integer("messages_scanned").notNull().default(0), transactionsCreated: integer("transactions_created").notNull().default(0),
   duplicatesSkipped: integer("duplicates_skipped").notNull().default(0), parseFailures: integer("parse_failures").notNull().default(0), errorMessage: text("error_message"),
   startedAt: integer("started_at").notNull().default(sql`(unixepoch())`), finishedAt: integer("finished_at"),
-}, (table) => [index("idx_sync_runs_user_started").on(table.userId, table.startedAt)]);
+}, (table) => [
+  index("idx_sync_runs_user_started").on(table.userId, table.startedAt),
+  // Como máximo una ejecución activa por usuario: el índice hace atómico el bloqueo de sincronización.
+  uniqueIndex("idx_sync_runs_one_running").on(table.userId).where(sql`status = 'running'`),
+]);
+
+// Correos revisados que no produjeron movimiento (no bancarios o ilegibles): evita reprocesarlos y atascar los lotes.
+export const processedMessages = sqliteTable("processed_messages", {
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  gmailMessageId: text("gmail_message_id").notNull(),
+  status: text("status").notNull().default("ignored"),
+  createdAt: integer("created_at").notNull().default(sql`(unixepoch())`),
+}, (table) => [primaryKey({ columns: [table.userId, table.gmailMessageId] })]);

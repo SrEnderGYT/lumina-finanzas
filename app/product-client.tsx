@@ -38,8 +38,9 @@ const inputDate = (value?: number) => new Date(value ?? Date.now()).toISOString(
 
 async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
-  const body = response.status === 204 ? null : await response.json().catch(() => null) as { error?: string } | null;
-  if (!response.ok) throw new Error(body?.error || "No se pudo completar la operación.");
+  const body = response.status === 204 ? null : await response.json().catch(() => null) as { error?: string; code?: string } | null;
+  if (response.status === 401) { window.location.replace("/"); throw new Error("Tu sesión expiró."); }
+  if (!response.ok) throw Object.assign(new Error(body?.error || "No se pudo completar la operación."), { code: (body as { code?: string } | null)?.code });
   return body as T;
 }
 
@@ -52,6 +53,7 @@ export function ProductClient() {
   const [online, setOnline] = useState(true);
   const [mounted, setMounted] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [needsReconnect, setNeedsReconnect] = useState(false);
   const [period, setPeriod] = useState("month");
   const [query, setQuery] = useState("");
   const [bank, setBank] = useState("");
@@ -82,8 +84,8 @@ export function ProductClient() {
   const sync = async () => {
     if (!online) { toast.error("No tienes conexión"); return; }
     setSyncing(true);
-    try { const result = await jsonRequest<{ created: number; duplicates: number; failures: number }>("/api/sync", { method: "POST" }); await load(true); toast.success(result.created ? `${result.created} movimientos nuevos` : "Gmail ya está al día", { description: result.failures ? `${result.failures} correos necesitaron revisión.` : "Sin duplicados." }); }
-    catch (cause) { toast.error("No pudimos sincronizar", { description: cause instanceof Error ? cause.message : "Inténtalo otra vez." }); }
+    try { const result = await jsonRequest<{ created: number; duplicates: number; failures: number; remaining: number; hasMore: boolean }>("/api/sync", { method: "POST" }); await load(true); toast.success(result.created ? `${result.created} movimientos nuevos` : "Gmail ya está al día", { description: result.hasMore ? "Aún hay correos por revisar: vuelve a sincronizar." : result.failures ? `${result.failures} correos necesitaron revisión.` : "Sin duplicados." }); }
+    catch (cause) { if ((cause as { code?: string }).code === "reconnect_required") setNeedsReconnect(true); toast.error("No pudimos sincronizar", { description: cause instanceof Error ? cause.message : "Inténtalo otra vez." }); }
     finally { setSyncing(false); }
   };
 
@@ -92,6 +94,12 @@ export function ProductClient() {
     catch (cause) { toast.error(cause instanceof Error ? cause.message : "No se pudo guardar."); }
   };
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("auth") !== "connected") return;
+    toast.success("Gmail conectado", { description: "Pulsa Sincronizar Gmail para importar tus movimientos." });
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
   const logout = async () => { await fetch("/api/auth/logout", { method: "POST" }); window.location.replace("/"); };
   const open = (kind: Exclude<Modal, null>, item: Transaction | Card | Category | Subcategory | Rule | null = null) => { setEditing(item); setModal(kind); };
   const changeRule = async (rule: Rule, enabled: boolean) => mutate(`/api/rules/${rule.id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }, enabled ? "Regla activada" : "Regla pausada");
@@ -106,7 +114,8 @@ export function ProductClient() {
     <aside className={`fixed inset-y-0 left-0 z-50 hidden w-[244px] flex-col bg-[#102820] px-4 py-5 text-white lg:flex ${!online ? "pt-12" : ""}`}><Brand /><nav className="mt-8 space-y-1.5"><Nav active={view === "overview"} icon={<LayoutDashboard/>} label="Resumen" onClick={() => setView("overview")}/><Nav active={view === "transactions"} icon={<CreditCard/>} label="Movimientos" onClick={() => setView("transactions")}/><Nav active={view === "cards"} icon={<WalletCards/>} label="Tarjetas" onClick={() => setView("cards")}/><Nav active={view === "automation"} icon={<Settings2/>} label="Categorías y reglas" onClick={() => setView("automation")}/></nav><div className="mt-auto rounded-[20px] border border-white/10 bg-white/[.06] p-4"><p className="text-xs text-white/45">Cuenta conectada</p><p className="mt-1 truncate text-sm font-semibold">{snapshot?.account?.email}</p><button onClick={logout} className="mt-4 flex items-center gap-2 text-xs text-white/55 hover:text-white"><LogOut className="size-3.5"/> Cerrar sesión</button></div></aside>
     <main className="min-h-screen lg:pl-[244px]">
       <header className={`sticky z-30 flex h-[72px] items-center border-b border-[#dce3e1] bg-[#f8faf9]/90 px-4 backdrop-blur-xl sm:px-7 lg:px-9 ${online ? "top-0" : "top-8"}`}><button className="mr-3 rounded-xl p-2 lg:hidden" onClick={() => setMobileMenu(!mobileMenu)} aria-label="Abrir navegación"><Menu className="size-5"/></button><div><p className="text-xs font-semibold text-[#71807b]">{view === "overview" ? "Panorama financiero" : view === "transactions" ? "Todos tus movimientos" : view === "cards" ? "Medios de pago" : "Automatización"}</p><p className="font-semibold tracking-[-.025em]">{snapshot?.user.name}</p></div><div className="ml-auto flex items-center gap-2">{snapshot?.account?.lastSyncAt && <span className="hidden text-xs text-[#75847f] md:inline">Actualizado {new Intl.DateTimeFormat("es-PE", { hour: "2-digit", minute: "2-digit" }).format(snapshot.account.lastSyncAt * 1000)}</span>}<Button onClick={sync} disabled={syncing || !online} size="sm" className="h-9 rounded-xl bg-[#173d32] text-white"><RefreshCw className={`size-4 ${syncing ? "animate-spin" : ""}`}/><span className="hidden sm:inline">{syncing ? "Sincronizando" : "Sincronizar Gmail"}</span></Button><button className="grid size-9 place-items-center rounded-xl border bg-white" aria-label="Notificaciones"><Bell className="size-4"/></button></div></header>
-      {mobileMenu && <div className="border-b bg-[#102820] p-3 text-white lg:hidden"><div className="grid grid-cols-2 gap-2"><Nav active={view === "overview"} icon={<LayoutDashboard/>} label="Resumen" onClick={() => { setView("overview"); setMobileMenu(false); }}/><Nav active={view === "transactions"} icon={<CreditCard/>} label="Movimientos" onClick={() => { setView("transactions"); setMobileMenu(false); }}/><Nav active={view === "cards"} icon={<WalletCards/>} label="Tarjetas" onClick={() => { setView("cards"); setMobileMenu(false); }}/><Nav active={view === "automation"} icon={<Settings2/>} label="Reglas" onClick={() => { setView("automation"); setMobileMenu(false); }}/></div></div>}
+      {mobileMenu && <div className="border-b bg-[#102820] p-3 text-white lg:hidden"><div className="grid grid-cols-2 gap-2"><Nav active={view === "overview"} icon={<LayoutDashboard/>} label="Resumen" onClick={() => { setView("overview"); setMobileMenu(false); }}/><Nav active={view === "transactions"} icon={<CreditCard/>} label="Movimientos" onClick={() => { setView("transactions"); setMobileMenu(false); }}/><Nav active={view === "cards"} icon={<WalletCards/>} label="Tarjetas" onClick={() => { setView("cards"); setMobileMenu(false); }}/><Nav active={view === "automation"} icon={<Settings2/>} label="Reglas" onClick={() => { setView("automation"); setMobileMenu(false); }}/></div><button onClick={logout} className="mt-3 flex items-center gap-2 px-2 py-2 text-sm text-white/70 hover:text-white"><LogOut className="size-4"/> Cerrar sesión</button></div>}
+      {needsReconnect && <div role="alert" className="flex flex-wrap items-center justify-center gap-3 bg-[#fff3f0] px-4 py-3 text-sm text-[#823f35]">Lúmina perdió el acceso a tu Gmail. <a href="/api/auth/google/start" className="font-semibold underline">Reconectar Gmail</a></div>}
       <div className="mx-auto max-w-[1500px] px-4 py-6 sm:px-7 lg:px-9 lg:py-8">
         {view === "overview" && <><DashboardFilters snapshot={snapshot!} period={period} setPeriod={setPeriod} bank={bank} setBank={setBank} cardId={cardId} setCardId={setCardId} categoryId={categoryId} setCategoryId={setCategoryId}/><Overview snapshot={snapshot!} mounted={mounted} change={change} sync={sync} add={() => open("transaction")} />{snapshot!.transactions.length > 0 && <BreakdownPanels bank={snapshot!.byBank} card={snapshot!.byCard}/>}</>}
         {view === "transactions" && <TransactionsView snapshot={snapshot!} query={query} setQuery={setQuery} period={period} setPeriod={setPeriod} bank={bank} setBank={setBank} cardId={cardId} setCardId={setCardId} categoryId={categoryId} setCategoryId={setCategoryId} add={() => open("transaction")} edit={(item) => open("transaction", item)} remove={(id) => mutate(`/api/transactions/${id}`, { method: "DELETE" }, "Movimiento eliminado")} sync={sync} />}

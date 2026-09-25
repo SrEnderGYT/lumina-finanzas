@@ -7,7 +7,28 @@ import { requireSession } from "@/lib/session";
 const schema = z.object({ name: z.string().trim().min(2).max(50).optional(), color: z.string().regex(/^#[0-9a-f]{6}$/i).optional(), icon: z.string().trim().max(30).optional(), kind: z.enum(["expense", "income", "both"]).optional() });
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
-  try { const session = await requireSession(request); const payload = schema.safeParse(await request.json()); if (!payload.success) return Response.json({ error: "Categoría no válida." }, { status: 400 }); const { id } = await context.params; const [category] = await getDb().update(categories).set({ ...payload.data, updatedAt: Math.floor(Date.now() / 1000) }).where(and(eq(categories.id, id), eq(categories.userId, session.userId))).returning(); return category ? Response.json({ category }) : Response.json({ error: "Categoría no encontrada." }, { status: 404 }); } catch (error) { if (error instanceof Response) return error; return Response.json({ error: "No se pudo actualizar la categoría." }, { status: 500 }); }
+  try {
+    const session = await requireSession(request);
+    const payload = schema.safeParse(await request.json());
+    if (!payload.success) return Response.json({ error: "Categoría no válida." }, { status: 400 });
+    const { id } = await context.params;
+    const db = getDb();
+    const [current] = await db.select().from(categories).where(and(eq(categories.id, id), eq(categories.userId, session.userId))).limit(1);
+    if (!current) return Response.json({ error: "Categoría no encontrada." }, { status: 404 });
+    if (current.name === "Otros" && payload.data.name && payload.data.name !== "Otros") return Response.json({ error: "La categoría Otros no se puede renombrar." }, { status: 400 });
+    const now = Math.floor(Date.now() / 1000);
+    const renamed = payload.data.name && payload.data.name !== current.name;
+    // Categoría y movimientos se actualizan en un solo batch atómico para que el nombre desnormalizado nunca quede desfasado.
+    const update = db.update(categories).set({ ...payload.data, updatedAt: now }).where(and(eq(categories.id, id), eq(categories.userId, session.userId))).returning();
+    const [updated] = renamed
+      ? await db.batch([update, db.update(transactions).set({ category: payload.data.name as string, updatedAt: now }).where(and(eq(transactions.categoryId, id), eq(transactions.userId, session.userId)))])
+      : await db.batch([update]);
+    const category = updated[0];
+    return Response.json({ category });
+  } catch (error) {
+    if (error instanceof Response) return error;
+    return Response.json({ error: "No se pudo actualizar la categoría. Comprueba que el nombre no exista." }, { status: 409 });
+  }
 }
 
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {

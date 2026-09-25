@@ -2,6 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { cards, categories, categorizationRules, subcategories } from "@/db/schema";
 import { categorize } from "./categorize";
+import { regexProblem } from "./validation";
 
 const categoryDefaults = [
   ["Alimentación", "#2bd9a8", "utensils"], ["Transporte", "#625cf6", "car"],
@@ -41,24 +42,33 @@ export async function ensureUserDefaults(userId: string) {
 function matches(value: string, operator: string, pattern: string): boolean {
   if (operator === "equals") return value.toLocaleLowerCase() === pattern.toLocaleLowerCase();
   if (operator === "starts_with") return value.toLocaleLowerCase().startsWith(pattern.toLocaleLowerCase());
-  if (operator === "regex") { try { return new RegExp(pattern, "i").test(value); } catch { return false; } }
+  if (operator === "regex") { if (regexProblem(pattern)) return false; try { return new RegExp(pattern, "i").test(value); } catch { return false; } }
   return value.toLocaleLowerCase().includes(pattern.toLocaleLowerCase());
 }
 
-export async function resolveCategory(userId: string, merchant: string, description = "") {
+/** Carga categorías y reglas una sola vez; útil en la sincronización para no consultar la base por cada correo. */
+export async function createClassifier(userId: string) {
   const db = getDb();
   const available = await ensureUserDefaults(userId);
   const rules = await db.select().from(categorizationRules).where(and(eq(categorizationRules.userId, userId), eq(categorizationRules.enabled, true))).orderBy(asc(categorizationRules.priority));
-  for (const rule of rules) {
-    const value = rule.field === "description" ? description : `${merchant} ${description}`;
-    if (matches(value, rule.operator, rule.pattern)) {
-      const category = available.find((item) => item.id === rule.categoryId);
-      if (category) return { categoryId: category.id, subcategoryId: rule.subcategoryId ?? undefined, name: category.name, source: "rule" as const };
+  return (merchant: string, description = "") => {
+    // Acota el texto evaluado para limitar el costo de las expresiones regulares del usuario.
+    const text = `${merchant} ${description}`.slice(0, 500);
+    for (const rule of rules) {
+      const value = rule.field === "description" ? description.slice(0, 500) : text;
+      if (matches(value, rule.operator, rule.pattern)) {
+        const category = available.find((item) => item.id === rule.categoryId);
+        if (category) return { categoryId: category.id as string | undefined, subcategoryId: rule.subcategoryId ?? undefined, name: category.name, source: "rule" as const };
+      }
     }
-  }
-  const fallbackName = categorize(merchant, description);
-  const fallback = available.find((item) => item.name === fallbackName) ?? available.find((item) => item.name === "Otros");
-  return { categoryId: fallback?.id, name: fallback?.name ?? "Otros", source: "system" as const };
+    const fallbackName = categorize(merchant, description);
+    const fallback = available.find((item) => item.name === fallbackName) ?? available.find((item) => item.name === "Otros");
+    return { categoryId: fallback?.id as string | undefined, subcategoryId: undefined as string | undefined, name: fallback?.name ?? "Otros", source: "system" as const };
+  };
+}
+
+export async function resolveCategory(userId: string, merchant: string, description = "") {
+  return (await createClassifier(userId))(merchant, description);
 }
 
 export async function ensureCard(userId: string, bank: string, last4?: string, cardType?: string, brand?: string) {

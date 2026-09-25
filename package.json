@@ -12,8 +12,11 @@
     "start": "node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js dev --config dist/server/wrangler.json --local --persist-to .wrangler/state --ip 127.0.0.1 --inspector-port 0",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "node scripts/apply-migrations.mjs",
     "typecheck": "tsc --noEmit",
-    "test:parsers": "tsx scripts/test-parsers.ts"
+    "test:parsers": "tsx scripts/test-parsers.ts",
+    "test:validation": "tsx scripts/test-validation.ts",
+    "test": "npm run test:parsers && npm run test:validation"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

@@ -20,3 +20,8 @@ for (const [index, item] of cases.entries()) {
 }
 
 console.log(`Parsers verificados: ${cases.length}`);
+
+// Un correo de BBVA que menciona a BCP debe atribuirse a BBVA (el remitente manda sobre el cuerpo).
+const cross = parseBankEmail({ id: "c", from: "alertas@bbva.pe", subject: "Consumo con tarjeta", body: "Consumo en NETFLIX por USD 12.99 con tarjeta ****9934. Transfiere desde BCP sin costo.", internalDate: Date.now() });
+assert.equal(cross?.bank, "BBVA");
+console.log("Atribución por remitente verificada");
