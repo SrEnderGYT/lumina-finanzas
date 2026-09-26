@@ -48,6 +48,9 @@ const COMPLETED_SIGNALS: Signal[] = [
   ["consumo aprobado", /\b(?:consumo\s+aprobado|nuevo\s+consumo)\b/i, 2],
   ["código de operación", /\b(?:c[oó]digo|n[uú]mero|nro\.?|n[°º])\s+de\s+operaci[oó]n\b|\boperaci[oó]n\s*(?:n[°º]|#|:)\s*\d+/i, 1.5],
   ["fecha y hora de la operación", /\b\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}\s*(?:,|a las|-)?\s*\d{1,2}:\d{2}/i, 1],
+  // Recibos de comercios (p. ej. Uber) suelen incluir CTAs y la palabra "promoción" por descuentos aplicados.
+  // Un recibo con total y medio de pago es evidencia de una operación, no publicidad.
+  ["recibo con total y medio de pago", /^(?=[\s\S]{0,12000}\b(?:recibo|comprobante)\b)(?=[\s\S]{0,12000}\btotal\s+(?:S\/\.?|PEN|USD|US\$|\$)\s*\d)(?=[\s\S]{0,12000}\b(?:pagos?|visa|mastercard|tarjeta)\b)/i, 3],
 ];
 
 // Operaciones que no ocurrieron: nunca se registran.
@@ -82,7 +85,10 @@ export function classifyEmail(email: EmailInput): Classification {
   const promo = sum(text, PROMO_SIGNALS);
   const statement = sum(text, STATEMENT_SIGNALS);
   const completed = sum(text, COMPLETED_SIGNALS);
-  const failed = sum(text, FAILED_SIGNALS);
+  // Los avisos válidos de algunos bancos incluyen pies legales como "si la compra es rechazada...".
+  // Esa hipótesis no describe el estado de la operación actual y no debe anular evidencia confirmatoria.
+  const failureContext = text.replace(/\b(?:si|en caso (?:de )?(?:que )?)\b[^.]{0,180}\b(?:rechazada|cancelada|duplicada|anulada)\b[^.]{0,220}/gi, " ");
+  const failed = sum(failureContext, FAILED_SIGNALS);
   const sender = senderHints(email.from);
   const reasons: string[] = [];
 

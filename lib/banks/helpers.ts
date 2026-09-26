@@ -53,7 +53,8 @@ export function extractDate(text: string, fallback: number): number {
 }
 
 export function operationType(text: string): OperationType {
-  if (/devoluci[oó]n|reembolso|refund|revers[oa]/i.test(text)) return "refund";
+  // No basta con que un pie legal mencione una posible devolución: debe describir un reembolso efectuado.
+  if (/^(?:devoluci[oó]n|reembolso|refund|revers[oa])\b|\b(?:devoluci[oó]n|reembolso|refund|revers[oa])\s+(?:realizad[oa]|procesad[oa]|aprobad[oa]|efectuad[oa])\b|\b(?:te (?:devolvimos|reembolsamos)|hemos (?:devuelto|reembolsado))\b|\b(?:recibiste|te abonamos)\b[^.]{0,80}\b(?:una?\s+)?(?:devoluci[oó]n|reembolso|refund|revers[oa])\b/i.test(text)) return "refund";
   if (/recibiste|te (?:yape|pline|transfiri)[oó]|te (?:depositaron|abonaron)/i.test(text)) return "income";
   // Pagar la tarjeta es mover dinero entre tus productos: sumarlo como gasto duplicaría los consumos ya registrados.
   if (/pago de (?:tu |la )?tarjeta|pago de (?:tu )?l[ií]nea/i.test(text)) return "transfer";
@@ -92,7 +93,8 @@ export function parseCommon(email: EmailInput, bank: string, parserId: string, m
       if (candidate && !merchantNoise(candidate)) { merchant = candidate; break search; }
     }
   }
-  return { bank, merchant, operationDate: extractDate(text, email.internalDate), ...amount, cardLast4: extractLast4(text), cardType: /d[eé]bito/i.test(text) ? "Débito" : /cr[eé]dito|visa|mastercard/i.test(text) ? "Crédito" : undefined, operationType: operationType(text), description: email.subject, confidence, parserId };
+  const cardType = /tarjeta\s+(?:de\s+)?cr[eé]dito/i.test(text) ? "Crédito" : /tarjeta\s+(?:de\s+)?d[eé]bito/i.test(text) ? "Débito" : /cr[eé]dito|visa|mastercard/i.test(text) ? "Crédito" : undefined;
+  return { bank, merchant, operationDate: extractDate(text, email.internalDate), ...amount, cardLast4: extractLast4(text), cardType, operationType: operationType(text), description: email.subject, confidence, parserId };
 }
 
 /** Todos los montos (en centavos, por moneda) que aparecen en el texto; sirve para contrastar la salida de la IA. */

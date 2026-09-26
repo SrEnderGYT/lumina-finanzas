@@ -112,4 +112,25 @@ assert.equal(run(mail("info@interbank.pe", "Aviso", "Recuerda que S/ 300 es el m
 const withFooter = mail("alertas@bcp.com.pe", "Compra realizada", "Compra realizada en WONG por S/ 89.90 con tarjeta **1234 el 24/09/2026 14:30. Aprovecha nuestras promociones en bcp.com.pe.");
 assert.equal(run(withFooter).accepted, true);
 
-console.log(`Clasificación verificada: ${promos.length + 4} publicidades rechazadas, ${real.length + tricky.length} operaciones aceptadas`);
+// Regresiones observadas en correos reales: CTAs dentro de un recibo y advertencias legales hipotéticas.
+const uberReceipt = mail(
+  "Recibos de Uber <noreply@uber.com>",
+  "[Personal] Tu viaje del viernes por la noche con Uber",
+  "Gracias por viajar. Recibo de tu viaje. Total PEN 5.90. Tarifa del viaje PEN 7.70. Promoción -PEN 2.00. Pagos Visa ••••9270 PEN 5.90. 25/09/2026 20:18. Visita la página de solicitud de viaje para conocer más.",
+  { labels: ["CATEGORY_UPDATES"] },
+);
+assert.equal(run(uberReceipt).accepted, true, run(uberReceipt).reason);
+assert.equal(parseBankEmail(uberReceipt)?.merchant, "UBER");
+assert.equal(parseBankEmail(uberReceipt)?.amountCents, 590);
+
+const bcpWithDisclaimer = mail(
+  "BCP Notificaciones <notificaciones@notificacionesbcp.com.pe>",
+  "Realizaste un consumo con tu Tarjeta de Crédito BCP - Servicio de Notificaciones BCP",
+  "Total del consumo S/ 5.90. Datos de la operación. Operación realizada. Consumo. Tarjeta de Crédito ****9270. Comercio DLC*UBER RIDES. Código de operación 12345. 25/09/2026 20:12. Si la compra es rechazada, cancelada o duplicada, el tiempo estimado de devolución será de 3 a 7 días.",
+);
+assert.equal(run(bcpWithDisclaimer).accepted, true, run(bcpWithDisclaimer).reason);
+assert.equal(parseBankEmail(bcpWithDisclaimer)?.operationType, "card_charge");
+assert.equal(parseBankEmail(bcpWithDisclaimer)?.cardType, "Crédito");
+assert.equal(parseBankEmail(mail("alertas@bcp.com.pe", "Reembolso realizado", "Te devolvimos S/ 5.90 de tu compra en UBER. Operación procesada el 25/09/2026."))?.operationType, "refund");
+
+console.log(`Clasificación verificada: ${promos.length + 4} publicidades rechazadas, ${real.length + tricky.length + 2} operaciones aceptadas`);
