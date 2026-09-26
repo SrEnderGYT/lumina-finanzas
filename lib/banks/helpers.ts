@@ -81,7 +81,7 @@ const FALLBACK_MERCHANT_PATTERNS: RegExp[] = [
   /\bcompra\s+en\s+([^.,;|]{2,40}?)(?=\s+(?:con|el|de tu|por)\b|[.,;]|$)/i,
 ];
 // Capturas que en realidad son montos, números o frases del encabezado, no un comercio.
-const merchantNoise = (value: string) => /\b(?:S\/|USD|US\$|PEN)\s*\d|^\d[\d\s.,-]*$|^\d{2,}\s+(?:en|por|con)\b|\bconstancia\b|\boperaci[oó]n\b|\bsorteos?\s+o\s+promociones?\b|\bnuestros correos\b|^(?:de|un|una|tu|su)\s/i.test(value) || value.length < 2;
+const merchantNoise = (value: string) => /\b(?:S\/|USD|US\$|PEN)\s*\d|^\d[\d\s.,-]*$|^\d{2,}\s+(?:en|por|con)\b|\bconstancia\b|\boperaci[oó]n\b|\bsorteos?\s+o\s+promociones?\b|\bnuestros correos\b|\bla direcci[oó]n web\b|^(?:de|un|una|tu|su)\s/i.test(value) || value.length < 2;
 
 export function parseCommon(email: EmailInput, bank: string, parserId: string, merchantPatterns: RegExp[], confidence = .88): ParsedTransaction | null {
   const text = normalize(`${email.subject} ${email.body}`);

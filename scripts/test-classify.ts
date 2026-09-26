@@ -143,5 +143,8 @@ assert.equal(parseBankEmail(bcpCardPayment)?.operationType, "transfer");
 const bcpWithdrawal = mail("notificaciones@notificacionesbcp.com.pe", "Realizaste un retiro de tu wardadito", `Total retirado S/ 70.58. Operación realizada. Retiro. Origen Wardadito carrito. Destino AHOR. *************013 ¿No reconoces esta operación? ${bcpFooter}`);
 assert.ok(parseBankEmail(bcpWithdrawal)?.merchant.startsWith("AHOR"));
 assert.equal(parseBankEmail(bcpWithdrawal)?.operationType, "expense");
+const bcpAdvance = mail("notificaciones@notificacionesbcp.com.pe", "Constancia de Adelanto de Sueldo", `Monto desembolsado S/ 2,500.00. Operación realizada. Adelanto de Sueldo. Desde Cuenta Sueldo ****0013. Número de operación 1199. ${bcpFooter}`);
+assert.equal(parseBankEmail(bcpAdvance)?.merchant, "Adelanto de sueldo BCP");
+assert.equal(parseBankEmail(bcpAdvance)?.operationType, "income");
 
 console.log(`Clasificación verificada: ${promos.length + 4} publicidades rechazadas, ${real.length + tricky.length + 2} operaciones aceptadas`);
