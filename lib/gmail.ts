@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt } from "drizzle-orm";
+import { and, eq, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { gmailAccounts, processedMessages, syncRuns, transactions } from "@/db/schema";
 import { parseWithAi } from "./ai-fallback";
@@ -58,6 +58,7 @@ async function validAccessToken(userId: string): Promise<string> {
 // El filtrado fino lo hace el clasificador local, que descarta la publicidad y la registra como auditoría.
 const MAIL_TERMS = 'compra OR consumo OR cargo OR "pago con tarjeta" OR transacción OR transaccion OR movimiento OR transferencia OR transferiste OR retiro OR retiraste OR pago OR pagaste OR abono OR depósito OR deposito OR devolución OR devolucion OR yape OR yapeaste OR plin OR plineaste OR recibiste OR realizaste OR usaste OR operación OR operacion';
 const LIST_PAGE_SIZE = 500;
+const KNOWN_LOOKUP_BATCH = 1000; // ids por consulta (≈25 KB de JSON, muy por debajo del límite de parámetros de D1)
 
 // Tope pensado para los límites de Workers/D1 (≈50 subrequests y consultas por invocación en el plan gratuito).
 const MAX_NEW_MESSAGES_PER_RUN = 20;
@@ -180,21 +181,17 @@ export async function syncGmail(userId: string) {
     }
     const ids = [...messageIds];
     stats.scanned = ids.length;
-    // Conocidos = ya convertidos en movimiento o revisados y descartados. Con listas largas se leen todos los ids del usuario en
-    // dos consultas (en vez de una por cada 50 correos), para no agotar el límite de consultas por invocación.
+    // Conocidos = ya convertidos en movimiento o revisados y descartados. Solo se consultan los ids candidatos, en lotes acotados y
+    // con un único parámetro JSON por consulta (json_each), sin traer al Worker todo el historial del usuario.
     const known = new Set<string>();
-    if (ids.length > 90) {
+    for (let offset = 0; offset < ids.length; offset += KNOWN_LOOKUP_BATCH) {
+      const list = JSON.stringify(ids.slice(offset, offset + KNOWN_LOOKUP_BATCH));
       const [saved, ignored] = await Promise.all([
-        db.select({ id: transactions.gmailMessageId }).from(transactions).where(eq(transactions.userId, userId)),
-        db.select({ id: processedMessages.gmailMessageId }).from(processedMessages).where(eq(processedMessages.userId, userId)),
+        db.select({ id: transactions.gmailMessageId }).from(transactions).where(and(eq(transactions.userId, userId), sql`${transactions.gmailMessageId} in (select value from json_each(${list}))`)),
+        db.select({ id: processedMessages.gmailMessageId }).from(processedMessages).where(and(eq(processedMessages.userId, userId), sql`${processedMessages.gmailMessageId} in (select value from json_each(${list}))`)),
       ]);
-      for (const row of [...saved, ...ignored]) known.add(row.id);
-    } else if (ids.length) {
-      const [saved, ignored] = await Promise.all([
-        db.select({ id: transactions.gmailMessageId }).from(transactions).where(and(eq(transactions.userId, userId), inArray(transactions.gmailMessageId, ids))),
-        db.select({ id: processedMessages.gmailMessageId }).from(processedMessages).where(and(eq(processedMessages.userId, userId), inArray(processedMessages.gmailMessageId, ids))),
-      ]);
-      for (const row of [...saved, ...ignored]) known.add(row.id);
+      for (const row of saved) known.add(row.id);
+      for (const row of ignored) known.add(row.id);
     }
     stats.duplicates = ids.filter((id) => known.has(id)).length;
     const fresh = ids.filter((id) => !known.has(id));

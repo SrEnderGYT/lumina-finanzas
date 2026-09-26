@@ -69,4 +69,8 @@ assert.ok(!seen.has("PEN:999900"), "un monto inventado no debe coincidir");
 for (const bad of ["^(?:(a)*)*$", "((a)*)*", "(a+)+$", "(?:a|aa)+", "(x+x+)+y", "((a|b)+)*", "(a{1,}){2,}"]) assert.ok(regexProblem(bad), `debe rechazar ${bad}`);
 for (const good of ["UBER|CABIFY|DIDI", "^WONG\\s\\d+$", "(?:UBER|CABIFY)", "[+*?]", "TOTTUS.*SAN ISIDRO", "\\(a+\\)+"]) assert.equal(regexProblem(good), null, `debe aceptar ${good}`);
 
+// Repeticiones exactas {n}: (.*a){20} tardó 241 ms con 50 caracteres y >5 s con 500.
+for (const bad of ["(.*a){20}", "(a+){10}", "(a|b*){5}", "((a)*){3,}"]) assert.ok(regexProblem(bad), `debe rechazar ${bad}`);
+for (const good of ["^\\d{4}$", "(?:UBER){1}", "WONG.{0,5}SAN"]) assert.equal(regexProblem(good), null, `debe aceptar ${good}`);
+
 console.log("Validaciones verificadas");

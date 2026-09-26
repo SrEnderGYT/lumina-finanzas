@@ -24,8 +24,8 @@ function hasRepeatedAmbiguousGroup(pattern: string): boolean {
       const open = stack.pop();
       if (open === undefined) continue;
       const next = source[index + 1];
-      const repeated = next === "+" || next === "*" || (next === "{" && /^\{\d+,\d*\}/.test(source.slice(index + 1)));
-      if (repeated && /[+*?|]|\{\d+,\d*\}/.test(source.slice(open + 1, index))) return true;
+      const repeated = next === "+" || next === "*" || (next === "{" && /^\{\d+(?:,\d*)?\}/.test(source.slice(index + 1)));
+      if (repeated && /[+*?|]|\{\d+(?:,\d*)?\}/.test(source.slice(open + 1, index))) return true;
     }
   }
   return false;

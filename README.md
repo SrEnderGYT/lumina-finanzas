@@ -35,8 +35,10 @@ Gestor financiero personal que convierte notificaciones de Gmail en movimientos 
    ```bash
    npm ci
    npm run build
-   node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 migrations apply DB --local --config dist/server/wrangler.json --persist-to .wrangler/state
+   npm run db:migrate:local
    ```
+
+   `db:migrate:local` aplica en orden las migraciones de `drizzle/`. Si tu base local ya tiene las anteriores, indica desde cuál continuar, por ejemplo `npm run db:migrate:local -- 3`.
 
 4. Inicia la aplicación:
 
@@ -62,11 +64,38 @@ La aplicación no contiene datos financieros simulados. Sin credenciales OAuth v
 ## Flujo de datos
 
 ```text
-Google OAuth → Gmail API (solo lectura) → normalización de correo
-             → parser específico por banco → expresiones regulares → genérico → IA opcional
-             → deduplicación por Gmail Message ID → D1
-             → agregaciones y filtros → dashboard
+Gmail (solo lectura) → detección del banco/emisor
+  → clasificación: transacción | publicidad | estado de cuenta | otro
+  → validación de que exista una operación real (evidencia textual, no solo un monto)
+  → extracción: monto, fecha, comercio, tarjeta/cuenta, código de operación
+  → nivel de confianza (alta / media / baja) → control de duplicados por Gmail Message ID
+  → registro en D1 → categorización → reportes mensuales
 ```
+
+### Clasificación y confianza
+
+Un monto como `S/ 100` **nunca** basta para registrar un movimiento. `lib/banks/classify.ts` puntúa señales de publicidad
+(«compra hasta S/…», «obtén S/…», descuentos, líneas de crédito, sorteos, cabecera `List-Unsubscribe`, pestaña Promociones de Gmail)
+y señales de una operación ya realizada (verbos en pasado, «alerta de compra», código de operación, fecha y hora).
+
+| Confianza | Condición | Se registra |
+|---|---|---|
+| Alta | monto + comercio + tarjeta/cuenta + fecha explícita | sí |
+| Media | monto + comercio (o tarjeta) + evidencia textual clara de la operación | sí, con etiqueta «Confianza media» |
+| Baja | solo un monto, características promocionales u operación no comprobable | **no** |
+
+Ante la duda no se registra. Los correos descartados se guardan en `processed_messages` con su clasificación y motivo, y cada
+movimiento guarda `classification`, `confidence_level` y `decision_reason`, para auditar y afinar las reglas. Pagar la tarjeta
+se trata como transferencia (no como gasto) para no duplicar los consumos; un Yape/Plin recibido es un ingreso.
+
+### Reportes mensuales
+
+`/api/bootstrap?month=YYYY-MM` devuelve **solo** los movimientos de ese mes (hora de Lima, UTC-5): gastos, ingresos, balance,
+transferencias, suscripciones, tarjetas, categorías y comercios. Los totales van en soles; otras monedas se listan aparte y no se suman.
+Para detectar suscripciones y pagos recurrentes se analizan hasta 6 meses de historial (comercio + moneda + monto aproximado +
+periodicidad + tarjeta), solo como análisis: cada movimiento sigue perteneciendo al mes en que ocurrió. Una compra única nunca es
+una suscripción, y solo los servicios de suscripción conocidos o declarados en el correo se muestran como «Suscripción»; el resto
+aparece como «Posible recurrente».
 
 ## Añadir un banco
 
@@ -90,6 +119,9 @@ Google OAuth → Gmail API (solo lectura) → normalización de correo
 - `npm run dev`: desarrollo local.
 - `npm run build`: build de producción Cloudflare Worker compatible.
 - `npm run db:generate`: genera una nueva migración después de modificar `db/schema.ts`.
+- `npm run db:migrate:local`: aplica las migraciones de `drizzle/` a la base D1 local (requiere `npm run build`).
 - `npm run typecheck`: valida TypeScript estricto.
-- `npm run test:parsers`: ejecuta pruebas determinísticas de los parsers bancarios.
+- `npm test`: ejecuta todas las pruebas (`test:parsers`, `test:validation`, `test:classify`, `test:recurrence`).
+- `npm run test:parsers`: pruebas determinísticas de los parsers bancarios.
+- `npm run test:classify`: casos de publicidad que debe rechazar y operaciones reales que debe aceptar.
 - `npm run lint`: revisión estática opcional.

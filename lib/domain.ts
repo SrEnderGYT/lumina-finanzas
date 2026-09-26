@@ -42,7 +42,7 @@ export async function ensureUserDefaults(userId: string) {
 function matches(value: string, operator: string, pattern: string): boolean {
   if (operator === "equals") return value.toLocaleLowerCase() === pattern.toLocaleLowerCase();
   if (operator === "starts_with") return value.toLocaleLowerCase().startsWith(pattern.toLocaleLowerCase());
-  if (operator === "regex") { if (regexProblem(pattern)) return false; try { return new RegExp(pattern, "i").test(value); } catch { return false; } }
+  if (operator === "regex") { if (regexProblem(pattern)) return false; try { return new RegExp(pattern, "i").test(value.slice(0, 150)); } catch { return false; } }
   return value.toLocaleLowerCase().includes(pattern.toLocaleLowerCase());
 }
 
