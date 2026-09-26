@@ -133,4 +133,15 @@ assert.equal(parseBankEmail(bcpWithDisclaimer)?.operationType, "card_charge");
 assert.equal(parseBankEmail(bcpWithDisclaimer)?.cardType, "Crédito");
 assert.equal(parseBankEmail(mail("alertas@bcp.com.pe", "Reembolso realizado", "Te devolvimos S/ 5.90 de tu compra en UBER. Operación procesada el 25/09/2026."))?.operationType, "refund");
 
+const bcpFooter = "Si la compra es rechazada, el tiempo de devolución será de 3 a 7 días. No participamos en sorteos o promociones. Nuestros correos solo dirigen a viabcp.com.";
+const bcpConsumption = mail("notificaciones@notificacionesbcp.com.pe", "Realizaste un consumo con tu Tarjeta de Crédito BCP", `Total del consumo S/ 264.00. Operación realizada. Consumo. Tarjeta de Crédito ****8828. Empresa 7 SOPAS KENNEDY. Número de operación 7788. 25/07/2026 04:26 a.m. ${bcpFooter}`);
+assert.equal(parseBankEmail(bcpConsumption)?.merchant, "7 SOPAS KENNEDY");
+assert.equal(parseBankEmail(bcpConsumption)?.operationType, "card_charge");
+const bcpCardPayment = mail("notificaciones@notificacionesbcp.com.pe", "Constancia de Pago de Tarjeta de Crédito Propia", `S/ 235.00. Operación realizada. Pago de tarjeta propia BCP. Pagado a VISA Infinite Sapphire ****9270. Tipo de pago Otro. Desde Cuenta sueldo ****0013. Número de operación 991. ${bcpFooter}`);
+assert.equal(parseBankEmail(bcpCardPayment)?.merchant, "VISA Infinite Sapphire ****9270");
+assert.equal(parseBankEmail(bcpCardPayment)?.operationType, "transfer");
+const bcpWithdrawal = mail("notificaciones@notificacionesbcp.com.pe", "Realizaste un retiro de tu wardadito", `Total retirado S/ 70.58. Operación realizada. Retiro. Origen Wardadito carrito. Destino AHOR. *************013 ¿No reconoces esta operación? ${bcpFooter}`);
+assert.ok(parseBankEmail(bcpWithdrawal)?.merchant.startsWith("AHOR"));
+assert.equal(parseBankEmail(bcpWithdrawal)?.operationType, "expense");
+
 console.log(`Clasificación verificada: ${promos.length + 4} publicidades rechazadas, ${real.length + tricky.length + 2} operaciones aceptadas`);
