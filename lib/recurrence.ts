@@ -15,6 +15,14 @@ const AMOUNT_TOLERANCE = 0.15;
 
 export const HISTORY_MONTHS = 6;
 
+/** Servicios que se cobran por suscripción. Un comercio general (supermercado, taxi) solo llega a "posible recurrente". */
+const SUBSCRIPTION_SERVICES = /\b(?:NETFLIX|SPOTIFY|DISNEY|HBO|MAX|PRIME|AMAZON PRIME|YOUTUBE|GOOGLE ONE|GOOGLE STORAGE|GOOGLE CLOUD|ICLOUD|APPLE|MICROSOFT|OFFICE|ADOBE|CANVA|CHATGPT|OPENAI|ANTHROPIC|CLAUDE|CLARO|MOVISTAR|ENTEL|BITEL|WIN|DIRECTV|PARAMOUNT|CRUNCHYROLL|DEEZER|PLAYSTATION|XBOX|NINTENDO|DROPBOX|ZOOM|NOTION|LINKEDIN|SMART FIT|SMARTFIT|BODYTECH|GYM|SEGURO|MEMBRESIA)\b/;
+
+/** ¿Este movimiento corresponde a la misma suscripción detectada? Compara comercio, moneda y rango de monto, no solo el nombre. */
+export function matchesRecurring(item: Pick<RecurringItem, "merchant" | "currency" | "medianCents">, row: { merchant: string; currency: string; amountCents: number }): boolean {
+  return merchantKey(item.merchant) === merchantKey(row.merchant) && item.currency === row.currency && Math.abs(row.amountCents - item.medianCents) <= item.medianCents * AMOUNT_TOLERANCE;
+}
+
 /** Clave estable de comercio: mayúsculas, sin números de sucursal/operación ni signos ("NETFLIX.COM 8842" → "NETFLIX COM"). */
 export function merchantKey(merchant: string): string {
   return merchant.toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Z\s]/g, " ").replace(/\s+/g, " ").trim();
@@ -60,7 +68,7 @@ export function detectRecurring(rows: RecurrenceInput[], periodStart: number, pe
     confidence = Math.min(0.99, confidence);
     const last = similar.reduce((a, b) => (b.operationDate > a.operationDate ? b : a));
     items.push({
-      merchant: last.merchant, kind: confidence >= 0.65 && (months.size >= 3 || explicit) ? "subscription" : "possible", months: months.size,
+      merchant: last.merchant, kind: confidence >= 0.65 && months.size >= 3 && (explicit || SUBSCRIPTION_SERVICES.test(merchantKey(last.merchant))) ? "subscription" : "possible", months: months.size,
       medianCents: median(similar.map((row) => row.amountCents)), currency: last.currency, lastDate: last.operationDate,
       cadenceDays: cadence, cardLabel: last.cardLabel ?? null, confidence: Math.round(confidence * 100) / 100,
       activeInPeriod: similar.some((row) => row.operationDate >= periodStart && row.operationDate <= periodEnd),

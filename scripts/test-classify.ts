@@ -77,6 +77,33 @@ for (const email of [
   mail("info@bcp.com.pe", "Tu tarjeta te espera", "Realiza tu primera compra con tu nueva tarjeta y recibe S/ 50 de regalo."),
 ]) assert.equal(run(email).accepted, false, `debía rechazarse: ${email.subject}`);
 
+// ---- Hallazgos de la revisión independiente (Codex).
+// 1) Publicidad en imperativo con la misma estructura que un aviso real, en los 6 bancos y en Yape/Plin.
+for (const from of ["noreply@bbva.pe", "noreply@bcp.com.pe", "noreply@interbank.pe", "noreply@scotiabank.com.pe", "noreply@bancofalabella.com.pe", "noreply@bancoripley.com.pe", "promo@yape.com.pe"]) {
+  const promo = mail(from, "Compra y gana", "Compra en TOTTUS por S/ 50 con tu tarjeta y acumula puntos.", { listUnsubscribe: true });
+  assert.equal(run(promo).accepted, false, `imperativo promocional aceptado (${from})`);
+  const noHeader = mail(from, "Compra y gana", "Compra en TOTTUS por S/ 50 con tu tarjeta y acumula puntos.");
+  assert.equal(run(noHeader).accepted, false, `imperativo promocional sin cabecera aceptado (${from})`);
+}
+// 4) "Usaste tu tarjeta …" en todos los bancos.
+for (const from of ["alertas@bcp.com.pe", "alertas@interbank.pe", "alertas@bbva.pe", "alertas@scotiabank.com.pe", "alertas@bancofalabella.com.pe", "alertas@bancoripley.com.pe"]) {
+  const email = mail(from, "Usaste tu tarjeta", "Usaste tu tarjeta terminada en 1234 en WONG. Monto S/ 89.90. Fecha 24/09/2026 14:30.");
+  const decision = run(email);
+  assert.equal(decision.accepted, true, `"Usaste tu tarjeta" rechazado (${from}): ${decision.reason}`);
+  assert.equal(parseBankEmail(email)?.merchant, "WONG", `comercio en ${from}`);
+}
+assert.ok(run(mail("alertas@bbva.pe", "Nuevo consumo", "Nuevo consumo en RAPPI por S/ 32.00 con tu tarjeta terminada en 5566 el 24/09/2026 20:10.")).accepted);
+// 3) Ingresos por Yape/Plin sin tarjeta.
+const incomeYape = mail("notificaciones@yape.com.pe", "Te yapearon", "Recibiste S/ 50.00 de Ana Gomez. Te yapeó. Código de operación 991. 23/09/2026 12:00");
+assert.equal(run(incomeYape).accepted, true, run(incomeYape).reason);
+assert.ok(parseBankEmail(incomeYape)?.merchant.includes("Ana Gomez"));
+const incomePlin = mail("notificaciones@plin.pe", "Recibiste un Plin", "Recibiste S/ 35.00 de Carlos Ruiz por Plin. Código de operación 445. 22/09/2026 09:00");
+assert.equal(run(incomePlin).accepted, true, run(incomePlin).reason);
+// 8) Plin no se registra como Yape.
+const plin = parseBankEmail(mail("notificaciones@plin.pe", "Plineaste S/ 20", "Plineaste S/ 20.00 a Carlos Ruiz. Código de operación 771233. 22/09/2026 09:12"));
+assert.equal(plin?.bank, "Plin");
+assert.equal(plin?.parserId, "plin-v1");
+
 // ---- Solo un monto, sin evidencia: baja confianza, no se registra.
 assert.equal(run(mail("info@bcp.com.pe", "Novedades", "Tu saldo es S/ 1,200.00. Conoce más.")).accepted, false);
 assert.equal(run(mail("info@interbank.pe", "Aviso", "Recuerda que S/ 300 es el monto mínimo.")).accepted, false);

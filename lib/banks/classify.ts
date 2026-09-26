@@ -4,7 +4,7 @@ import type { EmailInput, ParsedTransaction } from "./types";
 export type EmailKind = "transaction" | "promotion" | "statement" | "other";
 export type ConfidenceLevel = "high" | "medium" | "low";
 
-export type Classification = { kind: EmailKind; reasons: string[]; hasTransactionEvidence: boolean };
+export type Classification = { kind: EmailKind; reasons: string[]; hasTransactionEvidence: boolean; promoScore?: number; hasOperationCode?: boolean };
 export type Decision = {
   accepted: boolean;
   kind: EmailKind;
@@ -16,6 +16,10 @@ export type Decision = {
 type Signal = [name: string, pattern: RegExp, weight: number];
 
 const AMOUNT = String.raw`(?:S\/\.?|PEN|USD|US\$|\$)\s*\d`;
+
+// "Compra en X por S/ N con tu tarjeta" también lo dice la publicidad en imperativo. Solo cuenta como indicio (nunca como
+// evidencia por sí sola) y únicamente si el correo trae además últimos 4 dígitos o una fecha explícita.
+const STRUCTURE = new RegExp(String.raw`\b(?:compra|consumo|cargo|pago|retiro)\s+(?:en|de)\s+.{2,70}?\s+por\s+${AMOUNT}[\d.,]*\s+(?:con|usando)\s+(?:tu\s+)?(?:tarjeta|cuenta)`, "i");
 
 // Publicidad: cada señal suma; un solo monto nunca convierte un correo en movimiento.
 const PROMO_SIGNALS: Signal[] = [
@@ -38,11 +42,10 @@ const STATEMENT_SIGNALS: Signal[] = [
 // Evidencia de una operación ya ocurrida (no de una invitación a comprar).
 const COMPLETED_SIGNALS: Signal[] = [
   ["operación realizada/aprobada", /\b(?:compra|consumo|pago|cargo|retiro|transferencia|d[eé]bito|operaci[oó]n)(?:\s+de\s+(?:tu\s+)?[a-z ]{2,30}?)?\s+(?:realizad[oa]|aprobad[oa]|procesad[oa]|efectuad[oa]|exitos[oa]|con [eé]xito)\b/i, 2],
-  ["verbo en pasado", /\b(?:realizaste|efectuaste|hiciste|pagaste|retiraste|transferiste|enviaste|recibiste|yapeaste|plineaste|te yape[oó]|te pline[oó]|depositaron|abonaron|se te carg[oó]|te cobramos|hemos (?:registrado|procesado))\b/i, 2],
+  ["verbo en pasado", /\b(?:realizaste|efectuaste|hiciste|pagaste|retiraste|transferiste|enviaste|recibiste|usaste|utilizaste|yapeaste|plineaste|te yape[oó]|te pline[oó]|te hicieron un (?:yape|plin)|depositaron|abonaron|se te carg[oó]|te cobramos|hemos (?:registrado|procesado))\b/i, 2],
   ["se realizó/procesó", /\bse\s+(?:ha\s+)?(?:realizado|realiz[oó]|procesado|proces[oó]|efectuado|efectu[oó]|cargado|carg[oó]|debitado|debit[oó]|registrado|registr[oó]|aprobado|aprob[oó])\b/i, 2],
   ["alerta de operación", /\b(?:alerta|notificaci[oó]n|aviso)\s+de\s+(?:compra|consumo|pago|cargo|retiro|transferencia|operaci[oó]n|movimiento)\b/i, 2],
-  ["consumo con/aprobado", /\bconsumo\s+(?:con|aprobado|en)\b/i, 1.5],
-  ["compra en X por S/ con tarjeta", new RegExp(String.raw`\b(?:compra|consumo|cargo|pago|retiro)\s+(?:en|de)\s+.{2,70}?\s+por\s+${AMOUNT}[\d.,]*\s+(?:con|usando)\s+(?:tu\s+)?(?:tarjeta|cuenta)`, "i"), 2],
+  ["consumo aprobado", /\b(?:consumo\s+aprobado|nuevo\s+consumo)\b/i, 2],
   ["código de operación", /\b(?:c[oó]digo|n[uú]mero|nro\.?|n[°º])\s+de\s+operaci[oó]n\b|\boperaci[oó]n\s*(?:n[°º]|#|:)\s*\d+/i, 1.5],
   ["fecha y hora de la operación", /\b\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}\s*(?:,|a las|-)?\s*\d{1,2}:\d{2}/i, 1],
 ];
@@ -88,17 +91,21 @@ export function classifyEmail(email: EmailInput): Classification {
   if (email.listUnsubscribe) { promoScore += 2; reasons.push("cabecera List-Unsubscribe (correo masivo)"); }
   if (sender.promo) { promoScore += 1; reasons.push("remitente de marketing"); }
 
-  const completedScore = completed.score + (sender.transactional ? 0.5 : 0) + (extractLast4(text) ? 1 : 0);
+  const last4 = extractLast4(text);
+  const structural = STRUCTURE.test(text) && (Boolean(last4) || hasExplicitDate(text));
+  if (structural) reasons.push("indicio: compra en X por S/ con tarjeta (más tarjeta o fecha)");
+  const completedScore = completed.score + (sender.transactional ? 0.5 : 0) + (last4 ? 1 : 0) + (structural ? 1.5 : 0);
   const hasEvidence = completed.score >= 2;
+  const hasOperationCode = /\b(?:c[oó]digo|n[uú]mero|nro\.?|n[°º])\s+de\s+operaci[oó]n\b|\boperaci[oó]n\s*(?:n[°º]|#|:)\s*\d+/i.test(text);
   reasons.push(...promo.hits.map((hit) => `promo: ${hit}`), ...completed.hits.map((hit) => `evidencia: ${hit}`));
 
-  if (failed.score > 0) return { kind: "other", reasons: [...reasons, ...failed.hits.map((hit) => `descartado: ${hit}`)], hasTransactionEvidence: false };
+  if (failed.score > 0) return { kind: "other", reasons: [...reasons, ...failed.hits.map((hit) => `descartado: ${hit}`)], hasTransactionEvidence: false, promoScore, hasOperationCode };
   // La publicidad gana salvo que exista evidencia clara de una operación ya realizada.
-  if (promoScore >= 2 && !hasEvidence) return { kind: "promotion", reasons, hasTransactionEvidence: false };
-  if (promoScore >= 4 && promoScore > completedScore) return { kind: "promotion", reasons, hasTransactionEvidence: hasEvidence };
-  if (statement.score >= 2 && !hasEvidence) return { kind: "statement", reasons: [...reasons, ...statement.hits.map((hit) => `estado: ${hit}`)], hasTransactionEvidence: false };
-  if (hasEvidence || completedScore >= 2.5) return { kind: "transaction", reasons, hasTransactionEvidence: hasEvidence };
-  return { kind: "other", reasons: [...reasons, "sin evidencia de una operación realizada"], hasTransactionEvidence: false };
+  if (promoScore >= 2 && !hasEvidence) return { kind: "promotion", reasons, hasTransactionEvidence: false, promoScore, hasOperationCode };
+  if (promoScore >= 4 && promoScore > completedScore) return { kind: "promotion", reasons, hasTransactionEvidence: hasEvidence, promoScore, hasOperationCode };
+  if (statement.score >= 2 && !hasEvidence) return { kind: "statement", reasons: [...reasons, ...statement.hits.map((hit) => `estado: ${hit}`)], hasTransactionEvidence: false, promoScore, hasOperationCode };
+  if (hasEvidence || completedScore >= 2.5) return { kind: "transaction", reasons, hasTransactionEvidence: hasEvidence, promoScore, hasOperationCode };
+  return { kind: "other", reasons: [...reasons, "sin evidencia de una operación realizada"], hasTransactionEvidence: false, promoScore, hasOperationCode };
 }
 
 export function hasExplicitDate(text: string): boolean {
@@ -125,9 +132,14 @@ export function decideConfidence(parsed: ParsedTransaction, email: EmailInput, c
   const hasCard = Boolean(parsed.cardLast4);
   const dated = hasExplicitDate(text);
   const evidence = classification.hasTransactionEvidence;
+  const promoSignals = (classification.promoScore ?? 0) > 0;
 
   if (!counterpartyOk) return { accepted: false, kind: "transaction", confidence: "low", reason: "Rechazado: no se pudo identificar el comercio." };
+  // Cualquier señal promocional sin una operación confirmada en pasado descarta el correo (ante la duda, no se registra).
+  if (promoSignals && !evidence) return { accepted: false, kind: "transaction", confidence: "low", reason: `Rechazado: señales promocionales sin evidencia de una operación realizada (${classification.reasons.filter((r) => r.startsWith("promo")).slice(0, 3).join("; ")}).` };
   if (merchantKnown && hasCard && dated && !fromAi) return { accepted: true, kind: "transaction", confidence: "high", reason: "Monto + comercio + tarjeta + fecha explícita." };
   if (evidence && (merchantKnown || hasCard)) return { accepted: true, kind: "transaction", confidence: "medium", reason: `Monto + ${merchantKnown ? "comercio" : "tarjeta"} + evidencia textual de la operación${fromAi ? " (extraído por IA)" : ""}.` };
+  // Transferencias, Yape/Plin e ingresos rara vez traen tarjeta: con verbo confirmatorio, código de operación y fecha bastan.
+  if (COUNTERPARTY_OPTIONAL.has(parsed.operationType) && evidence && dated && classification.hasOperationCode) return { accepted: true, kind: "transaction", confidence: "medium", reason: "Transferencia/ingreso con verbo confirmatorio, código de operación y fecha." };
   return { accepted: false, kind: "transaction", confidence: "low", reason: "Rechazado: no hay evidencia suficiente de que la operación ocurriera." };
 }

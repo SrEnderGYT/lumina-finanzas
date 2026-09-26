@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { detectRecurring, merchantKey, type RecurrenceInput } from "../lib/recurrence";
+import { detectRecurring, matchesRecurring, merchantKey, type RecurrenceInput } from "../lib/recurrence";
 import { limaMonthKey, limaMonthStart, limaTimestamp } from "../lib/time";
 
 const d = (y: number, m: number, day = 5) => limaTimestamp(y, m - 1, day, 12);
@@ -40,6 +40,14 @@ assert.equal(detectRecurring([row("SUELDO", 300000, d(2026, 8), { operationType:
 // Cada movimiento conserva su mes: un cobro anterior no marca actividad en el periodo si no hay cobro dentro.
 const stale = detectRecurring([row("HBO", 2990, d(2026, 6)), row("HBO", 2990, d(2026, 7))], start, end);
 assert.equal(stale[0]?.activeInPeriod, false);
+
+// Un comercio general (supermercado) con el mismo monto cada mes es solo "posible", no una suscripción.
+const tottus = detectRecurring([6, 7, 8, 9].map((m) => row("TOTTUS", 10000, d(2026, m, 5))), start, end);
+assert.equal(tottus[0].kind, "possible");
+// Una compra grande puntual del mismo comercio no se cuenta como parte de la suscripción detectada.
+assert.equal(matchesRecurring(found[0], { merchant: "NETFLIX", currency: "PEN", amountCents: 4490 }), true);
+assert.equal(matchesRecurring(found[0], { merchant: "NETFLIX", currency: "PEN", amountCents: 80000 }), false);
+assert.equal(matchesRecurring(found[0], { merchant: "NETFLIX", currency: "USD", amountCents: 4490 }), false);
 
 // Zona horaria: 22:30 en Lima del último día del mes sigue en ese mes aunque el servidor (UTC) ya esté en el siguiente.
 const lateNight = limaTimestamp(2026, 8, 30, 22, 30);

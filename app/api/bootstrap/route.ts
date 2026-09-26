@@ -2,7 +2,7 @@ import { and, desc, eq, gte, isNull, lte } from "drizzle-orm";
 import { getDb } from "@/db";
 import { gmailAccounts, syncRuns, transactions } from "@/db/schema";
 import { getUserTaxonomy } from "@/lib/domain";
-import { detectRecurring, HISTORY_MONTHS, merchantKey } from "@/lib/recurrence";
+import { detectRecurring, HISTORY_MONTHS, matchesRecurring } from "@/lib/recurrence";
 import { requireSession } from "@/lib/session";
 import { DAY_MS, limaMonthKey, limaMonthStart, limaParts } from "@/lib/time";
 
@@ -48,8 +48,18 @@ export async function GET(request: Request) {
     const passes = (row: (typeof windowRows)[number]) =>
       (!q || `${row.merchant} ${row.description || ""} ${row.bank}`.toLowerCase().includes(q)) && (!bank || row.bank === bank) && (!cardId || row.cardId === cardId) && (!categoryId || row.categoryId === categoryId);
     const scoped = windowRows.filter(passes);
-    const inPeriod = scoped.filter((row) => row.operationDate >= periodStart);
-    const previousPeriod = scoped.filter((row) => row.operationDate >= previousStart && row.operationDate < periodStart);
+    const allInPeriod = scoped.filter((row) => row.operationDate >= periodStart);
+    // Nunca se suman céntimos de monedas distintas: los totales y gráficos van en soles y el resto se reporta aparte.
+    const BASE_CURRENCY = "PEN";
+    const inPeriod = allInPeriod.filter((row) => row.currency === BASE_CURRENCY);
+    const previousPeriod = scoped.filter((row) => row.operationDate >= previousStart && row.operationDate < periodStart && row.currency === BASE_CURRENCY);
+    const otherCurrencies = Object.values(allInPeriod.filter((row) => row.currency !== BASE_CURRENCY).reduce<Record<string, { currency: string; expensesCents: number; incomeCents: number; count: number }>>((acc, row) => {
+      const entry = (acc[row.currency] ??= { currency: row.currency, expensesCents: 0, incomeCents: 0, count: 0 });
+      if (spendTypes.has(row.operationType)) entry.expensesCents += row.amountCents;
+      if (row.operationType === "income") entry.incomeCents += row.amountCents;
+      entry.count++;
+      return acc;
+    }, {}));
 
     const sum = (items: typeof windowRows, predicate: (row: (typeof windowRows)[number]) => boolean = () => true) => items.filter(predicate).reduce((total, row) => total + row.amountCents, 0);
     const spend = (row: (typeof windowRows)[number]) => spendTypes.has(row.operationType);
@@ -58,8 +68,8 @@ export async function GET(request: Request) {
       windowRows.map((row) => ({ merchant: row.merchant, amountCents: row.amountCents, currency: row.currency, operationDate: row.operationDate, operationType: row.operationType, cardKey: row.cardId ?? row.cardLast4, cardLabel: cardLabel(row) })),
       periodStart, periodEnd,
     );
-    const subscriptionMerchants = new Set(recurring.filter((item) => item.kind === "subscription").map((item) => merchantKey(item.merchant)));
-    const isSubscription = (row: (typeof windowRows)[number]) => spend(row) && (row.operationType === "subscription" || subscriptionMerchants.has(merchantKey(row.merchant)));
+    const confirmed = recurring.filter((item) => item.kind === "subscription");
+    const isSubscription = (row: (typeof windowRows)[number]) => spend(row) && (row.operationType === "subscription" || confirmed.some((item) => matchesRecurring(item, row)));
 
     const expenses = sum(inPeriod, spend);
     const income = sum(inPeriod, (row) => row.operationType === "income");
@@ -95,13 +105,14 @@ export async function GET(request: Request) {
         transfersCents: sum(inPeriod, (row) => row.operationType === "transfer"),
         subscriptionsCents: sum(inPeriod, isSubscription),
         balanceCents: income + refunds - expenses,
-        transactionCount: inPeriod.length,
+        transactionCount: allInPeriod.length,
       },
+      otherCurrencies,
       summary: {
         currentMonthCents: expenses,
         previousMonthCents: sum(previousPeriod, spend),
         todayCents: isCurrentMonth ? sum(inPeriod, (row) => spend(row) && row.operationDate >= todayStart) : 0,
-        transactionCount: inPeriod.length,
+        transactionCount: allInPeriod.length,
       },
       trend,
       byBank: grouped((row) => row.bank || "Sin identificar"),
@@ -111,7 +122,7 @@ export async function GET(request: Request) {
       recurring,
       ...taxonomy,
       banks: [...new Set(windowRows.map((row) => row.bank))].sort(),
-      transactions: inPeriod.map((row) => ({ ...row, maskedCard: row.cardLast4 ? `${row.cardType || "Tarjeta"} •••• ${row.cardLast4}` : null })),
+      transactions: allInPeriod.map((row) => ({ ...row, maskedCard: row.cardLast4 ? `${row.cardType || "Tarjeta"} •••• ${row.cardLast4}` : null })),
     });
   } catch (error) {
     if (error instanceof Response) return error;

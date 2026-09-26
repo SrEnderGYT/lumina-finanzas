@@ -54,6 +54,11 @@ async function validAccessToken(userId: string): Promise<string> {
   return refreshed.access_token;
 }
 
+// Términos de búsqueda amplios: los avisos reales incluyen transferencias, retiros, Yape/Plin, abonos y devoluciones, no solo "compra".
+// El filtrado fino lo hace el clasificador local, que descarta la publicidad y la registra como auditoría.
+const MAIL_TERMS = 'compra OR consumo OR cargo OR "pago con tarjeta" OR transacción OR transaccion OR movimiento OR transferencia OR transferiste OR retiro OR retiraste OR pago OR pagaste OR abono OR depósito OR deposito OR devolución OR devolucion OR yape OR yapeaste OR plin OR plineaste OR recibiste OR realizaste OR usaste OR operación OR operacion';
+const LIST_PAGE_SIZE = 500;
+
 // Tope pensado para los límites de Workers/D1 (≈50 subrequests y consultas por invocación en el plan gratuito).
 const MAX_NEW_MESSAGES_PER_RUN = 20;
 const FETCH_CONCURRENCY = 5;
@@ -149,11 +154,11 @@ export async function syncGmail(userId: string) {
         // Solo un historial vencido (404) justifica el respaldo por búsqueda; cualquier otro fallo aborta sin mover el cursor.
         if (!(error instanceof GmailHttpError && error.status === 404)) throw error;
         const after = Math.max(0, account.lastSyncAt - 300);
-        const query = encodeURIComponent(`after:${after} (compra OR consumo OR cargo OR transacción OR movimiento)`);
+        const query = encodeURIComponent(`after:${after} (${MAIL_TERMS})`);
         let fallbackToken: string | undefined;
-        for (let page = 0; page < 10; page++) {
+        for (let page = 0; page < 4; page++) {
           const suffix = fallbackToken ? `&pageToken=${encodeURIComponent(fallbackToken)}` : "";
-          const result = await gmailFetch<{ messages?: Array<{ id: string }>; nextPageToken?: string }>(accessToken, `messages?q=${query}&maxResults=100${suffix}`);
+          const result = await gmailFetch<{ messages?: Array<{ id: string }>; nextPageToken?: string }>(accessToken, `messages?q=${query}&maxResults=${LIST_PAGE_SIZE}${suffix}`);
           for (const item of result.messages ?? []) messageIds.add(item.id);
           fallbackToken = result.nextPageToken;
           if (!fallbackToken) break;
@@ -162,12 +167,12 @@ export async function syncGmail(userId: string) {
         if (fallbackToken) fallbackIncomplete = true;
       }
     } else {
-      // Importación inicial: los últimos 12 meses, con tope de 5 páginas (≈500 correos más recientes).
+      // Importación inicial: últimos 12 meses, hasta 4 páginas de 500 (los 2 000 correos coincidentes más recientes).
       let pageToken: string | undefined;
-      const query = encodeURIComponent('newer_than:365d (compra OR consumo OR cargo OR "pago con tarjeta" OR transacción OR movimiento)');
-      for (let page = 0; page < 5; page++) {
+      const query = encodeURIComponent(`newer_than:365d (${MAIL_TERMS})`);
+      for (let page = 0; page < 4; page++) {
         const suffix = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "";
-        const result = await gmailFetch<{ messages?: Array<{ id: string }>; nextPageToken?: string }>(accessToken, `messages?q=${query}&maxResults=100${suffix}`);
+        const result = await gmailFetch<{ messages?: Array<{ id: string }>; nextPageToken?: string }>(accessToken, `messages?q=${query}&maxResults=${LIST_PAGE_SIZE}${suffix}`);
         for (const item of result.messages ?? []) messageIds.add(item.id);
         pageToken = result.nextPageToken;
         if (!pageToken) break;
@@ -175,17 +180,23 @@ export async function syncGmail(userId: string) {
     }
     const ids = [...messageIds];
     stats.scanned = ids.length;
-    // Conocidos = ya convertidos en movimiento o revisados y descartados; una consulta por lote de 50.
+    // Conocidos = ya convertidos en movimiento o revisados y descartados. Con listas largas se leen todos los ids del usuario en
+    // dos consultas (en vez de una por cada 50 correos), para no agotar el límite de consultas por invocación.
     const known = new Set<string>();
-    for (let offset = 0; offset < ids.length; offset += 50) {
-      const chunk = ids.slice(offset, offset + 50);
+    if (ids.length > 90) {
       const [saved, ignored] = await Promise.all([
-        db.select({ id: transactions.gmailMessageId }).from(transactions).where(and(eq(transactions.userId, userId), inArray(transactions.gmailMessageId, chunk))),
-        db.select({ id: processedMessages.gmailMessageId }).from(processedMessages).where(and(eq(processedMessages.userId, userId), inArray(processedMessages.gmailMessageId, chunk))),
+        db.select({ id: transactions.gmailMessageId }).from(transactions).where(eq(transactions.userId, userId)),
+        db.select({ id: processedMessages.gmailMessageId }).from(processedMessages).where(eq(processedMessages.userId, userId)),
+      ]);
+      for (const row of [...saved, ...ignored]) known.add(row.id);
+    } else if (ids.length) {
+      const [saved, ignored] = await Promise.all([
+        db.select({ id: transactions.gmailMessageId }).from(transactions).where(and(eq(transactions.userId, userId), inArray(transactions.gmailMessageId, ids))),
+        db.select({ id: processedMessages.gmailMessageId }).from(processedMessages).where(and(eq(processedMessages.userId, userId), inArray(processedMessages.gmailMessageId, ids))),
       ]);
       for (const row of [...saved, ...ignored]) known.add(row.id);
     }
-    stats.duplicates = known.size;
+    stats.duplicates = ids.filter((id) => known.has(id)).length;
     const fresh = ids.filter((id) => !known.has(id));
     const batch = fresh.slice(0, MAX_NEW_MESSAGES_PER_RUN);
     stats.remaining = fresh.length - batch.length;

@@ -66,6 +66,12 @@ export function operationType(text: string): OperationType {
 
 // Comercio/contraparte cuando el parser del banco no lo encuentra: "pagaste … a X", "retiro … en cajero X", "suscripción a X".
 const FALLBACK_MERCHANT_PATTERNS: RegExp[] = [
+  // "Usaste tu tarjeta terminada en 1234 en WONG." / "Nuevo consumo en WONG" / "Cargo en WONG"
+  /\b(?:usaste|utilizaste)\b[^.]{0,60}?\ben\s+(?!\d)([^.,;|]{2,40}?)(?=\s+(?:monto|por|el|con)\b|[.,;]|$)/i,
+  /\b(?:nuevo consumo|cargo)\s+en\s+(?!\d)([^.,;|]{2,40}?)(?=\s+(?:monto|por|el|con|de tu)\b|[.,;]|$)/i,
+  // Ingresos: "Recibiste S/ 50.00 de Ana Gomez"
+  /\brecibiste\b(?:[^.]|\.\d){0,40}?\s+de\s+([^.,;|]{2,50}?)(?=\s+(?:por|con|el|desde)\b|[.,;]|$)/i,
+  /\bte\s+(?:hicieron un|enviaron un)\s+(?:yape|plin)\s+(?:de\s+)?([^.,;|]{2,40}?)(?=\s+(?:por|con|el)\b|[.,;]|$)/i,
   /\b(?:pagaste|transferiste|transferencia|enviaste|yapeaste|plineaste|depositaste)\b(?:[^.]|\.\d){0,70}?\s+a\s+(?:nombre de\s+)?([^.,;|]{2,50}?)(?=\s+(?:con|desde|el|de tu|por|usando|mediante)\b|[.,;]|$)/i,
   /\bretiro\b(?:[^.]|\.\d){0,40}?\ben\s+(cajero(?:(?!\bretiro\b)[^.,;]){0,40}?)(?=\s+(?:con|de tu|el)\b|[.,;]|$)/i,
   /\bsuscripci[oó]n\s+a\s+([^.,;|]{2,40}?)(?=\s+(?:con|el|de tu|por)\b|[.,;]|$)/i,
