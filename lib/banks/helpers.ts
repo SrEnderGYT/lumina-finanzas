@@ -39,12 +39,13 @@ export function extractLast4(text: string): string | undefined {
 }
 
 export function extractDate(text: string, fallback: number): number {
-  const direct = text.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/);
+  const direct = text.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?:\s*([ap])\.?\s*m\.?)?)?/i);
   if (!direct) return fallback;
   const [day, month] = [Number(direct[1]), Number(direct[2])];
   const year = Number(direct[3]) < 100 ? 2000 + Number(direct[3]) : Number(direct[3]);
-  const hour = Number(direct[4] ?? 12), minute = Number(direct[5] ?? 0);
-  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) return fallback;
+  const rawHour = Number(direct[4] ?? 12), minute = Number(direct[5] ?? 0), meridiem = direct[6]?.toLowerCase();
+  if (month < 1 || month > 12 || day < 1 || day > 31 || rawHour > (meridiem ? 12 : 23) || rawHour < (meridiem ? 1 : 0) || minute > 59) return fallback;
+  const hour = meridiem ? (rawHour % 12) + (meridiem === "p" ? 12 : 0) : rawHour;
   // Rechaza desbordes como 31/02 que JS convertiría silenciosamente en marzo.
   const check = new Date(Date.UTC(year, month - 1, day));
   if (check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) return fallback;

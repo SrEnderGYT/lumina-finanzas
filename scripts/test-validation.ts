@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { amountsInText, extractAmount, extractDate } from "../lib/banks/helpers";
+import { limaTimestamp } from "../lib/time";
 import { parseBankEmail, validateParsed } from "../lib/banks/index";
 import { regexProblem } from "../lib/validation";
 
@@ -24,6 +25,8 @@ assert.equal(extractDate("el 31/02/2026", fallback), fallback);
 assert.equal(extractDate("el 15/13/2026", fallback), fallback);
 assert.equal(extractDate("el 24/09/2026 25:00", fallback), fallback);
 assert.equal(new Date(extractDate("el 24/09/2026", fallback)).getDate(), 24);
+assert.equal(extractDate("el 25/09/2026 8:18 p.m.", fallback), limaTimestamp(2026, 8, 25, 20, 18));
+assert.equal(extractDate("el 25/09/2026 12:05 a.m.", fallback), limaTimestamp(2026, 8, 25, 0, 5));
 
 // Validación de resultados no confiables (p. ej. IA con inyección en el correo).
 const base = { bank: "BCP", merchant: "WONG", operationDate: Date.now(), amountCents: 5000, currency: "PEN" as const, operationType: "expense" as const, confidence: 0.7, parserId: "ai-fallback-v1" };
