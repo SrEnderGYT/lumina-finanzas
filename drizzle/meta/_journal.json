@@ -43,6 +43,13 @@
       "when": 1790381064383,
       "tag": "0005_transactions_backup_20260925",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790381331168,
+      "tag": "0006_reimport_unclassified_gmail",
+      "breakpoints": true
     }
   ]
 }
